@@ -325,6 +325,7 @@ for _teardown_source in \
   fm-control-lib.sh \
   fm-lock-lib.sh \
   fm-classify-lib.sh \
+  fm-dod-lib.sh \
   fm-gate-refuse-lib.sh \
   fm-pr-lib.sh \
   fm-public-followup-lib.sh \
@@ -358,6 +359,8 @@ unset _teardown_source
 . "$SCRIPT_DIR/fm-lock-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
@@ -1586,7 +1589,11 @@ content_in_default() {
 # only for genuinely unlanded work.
 work_is_landed() {
   local branch=$1
-  pr_is_merged "$branch" && return 0
+  if [ "$(fm_meta_get "$META" forge)" = push-only ]; then
+    fm_dod_codeup_merged "$WT" "$PROJ" "$(status_current_line "$STATE/$ID.status" ship)" "$STATE" "$ID" "$META" && return 0
+  else
+    pr_is_merged "$branch" && return 0
+  fi
   content_in_default
 }
 

@@ -678,6 +678,30 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
   [ "$mode" = local-only ] && fm_dod_ref_contains "$project" refs/heads "$sha"
 }
 
+fm_dod_codeup_merged() {  # <worktree> <project> <line> <state> <id> <meta>
+  local wt=$1 project=$2 line=$3 state=$4 id=$5 meta=$6 sha branch base note mr_id mr_url receipt marker script_dir
+  [ "$(fm_dod_meta_value "$meta" forge)" = push-only ] || return 1
+  [ "$(status_line_verb "$line")" = done ] || return 1
+  [ -n "$state" ] && [ -n "$id" ] && [ -d "$state" ] || return 1
+  sha=$(git -C "$wt" rev-parse --verify HEAD 2>/dev/null) || return 1
+  branch=$(fm_dod_meta_value "$meta" branch)
+  [ -n "$branch" ] || return 1
+  note=$(status_line_note "$line")
+  if [[ "$note" =~ ^Codeup[[:space:]]MR[[:space:]]([0-9]+)[[:space:]](https://[^[:space:]]+)$ ]]; then
+    mr_id=${BASH_REMATCH[1]}
+    mr_url=${BASH_REMATCH[2]}
+  else
+    return 1
+  fi
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  base=$("$script_dir/fm-project-mode.sh" --base-branch "$(basename "$project")" 2>/dev/null) || return 1
+  [ -n "$base" ] || return 1
+  receipt=$(printf '%s\t%s\t%s\t%s\t%s' "$sha" "$branch" "$base" "$mr_id" "$mr_url")
+  marker="$state/$id.codeup-accepted"
+  [ -f "$marker" ] && [ ! -L "$marker" ] && [ "$(cat "$marker")" = "$receipt" ] || return 1
+  "$script_dir/fm-codeup-change-request.sh" verify-merged "$wt" "$branch" "$base" "$mr_id" "$mr_url" >/dev/null 2>&1
+}
+
 # 0 when <line> is not a ship done: to gate, when it names the task's recorded
 # PR whose head the forge holds, when it names a Gerrit change whose current
 # patch set carries the worker copy's HEAD tree, or otherwise when its named
@@ -733,13 +757,11 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
       printf '%s\n' 'Codeup acceptance state is unavailable'
       return 1
     fi
+    if fm_dod_codeup_merged "$wt" "$project" "$line" "$state" "$id" "$meta"; then
+      return 0
+    fi
     receipt=$(printf '%s\t%s\t%s\t%s\t%s' "$sha" "$branch" "$base" "$mr_id" "$mr_url")
     marker="$state/$id.codeup-accepted"
-    if [ -f "$marker" ] && [ ! -L "$marker" ] && [ "$(cat "$marker")" = "$receipt" ]; then
-      if "$script_dir/fm-codeup-change-request.sh" verify-merged "$wt" "$branch" "$base" "$mr_id" "$mr_url" >/dev/null 2>&1; then
-        return 0
-      fi
-    fi
     remote_sha=$(fm_run_timed 10 git -C "$wt" ls-remote --heads origin "refs/heads/$branch" 2>/dev/null) || remote_sha=
     remote_sha=$(printf '%s\n' "$remote_sha" | awk -v r="refs/heads/$branch" '$2 == r {print $1}')
     if [ "$remote_sha" != "$sha" ]; then

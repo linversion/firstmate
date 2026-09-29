@@ -47,11 +47,11 @@ first_line() {
   printf '%s\n' "$1" | sed -n '1s/[[:space:]]\{1,\}/ /g;1p'
 }
 
-# shellcheck source=bin/fm-project-base-lib.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-project-base-lib.sh"
+# shellcheck source=bin/fm-tangle-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-tangle-lib.sh"
 
 default_branch() {
-  fm_project_base_branch "$1" "${2:-$(basename "$1")}"
+  fm_default_branch "$1"
 }
 
 # Resolve the PRIMARY checkout's current default-branch commit - the local-HEAD

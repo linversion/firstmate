@@ -1898,8 +1898,8 @@ test_origin_queries_are_bounded() {
   git -C "$wt" remote add origin "$home/origin.git"
   printf '%s\n' '- project [direct-PR forge=push-only base=develop] - fixture' > "$home/data/projects.md"
   printf 'forge=push-only\nbranch=develop\n' > "$home/state/task.meta"
-  out=$(FM_HOME="$home" bash -uc 'unset SCRIPT_DIR; . "$1/bin/fm-ff-lib.sh"; default_branch "$2"' _ "$ROOT" "$wt") \
-    || fail 'standalone fast-forward library could not resolve registered base'
+  out=$(FM_HOME="$home" bash -uc 'unset SCRIPT_DIR; . "$1/bin/fm-project-base-lib.sh"; fm_project_base_branch "$2"' _ "$ROOT" "$wt") \
+    || fail 'standalone project base library could not resolve registered base'
   [ "$out" = develop ] || fail 'standalone base lookup returned wrong branch'
   export FM_TEST_REAL_GIT FM_TEST_REMOTE_SHA
   FM_TEST_REAL_GIT=$(command -v git)
