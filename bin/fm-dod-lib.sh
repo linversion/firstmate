@@ -341,6 +341,7 @@ EOF
 # to read back from it.
 fm_gerrit_publish_block() {
   local base=${1:-} base_q publish_instruction
+  # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
   publish_instruction='Run `gerrit-axi publish --squash --json`, adding `--branch <b>` only when the task names a target branch other than the server'\''s default.'
   if [ -n "$base" ]; then
     printf -v base_q '%q' "$base"

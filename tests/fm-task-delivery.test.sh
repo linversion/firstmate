@@ -1749,7 +1749,7 @@ test_registered_base_reaches_worker_instructions() {
   local home mode forge forge_annotation base annotation id out ship scout promoted replay expected n=0
   home="$TMP_ROOT/instruction-base/home"
   mkdir -p "$home/data" "$home/state"
-  for base in develop 'release/$stable' ''; do
+  for base in develop "release/\$stable" ''; do
     annotation=
     [ -z "$base" ] || annotation=" base=$base"
     for mode in direct-PR no-mistakes local-only; do
@@ -1802,6 +1802,7 @@ test_registered_base_reaches_worker_instructions() {
           assert_not_contains "$ship" '--base ' 'unregistered PR base added'
           assert_not_contains "$promoted" '--base-branch ' 'unregistered pipeline base added'
           if [ "$forge" = gerrit ]; then
+            # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
             assert_contains "$ship" 'adding `--branch <b>` only when' 'legacy Gerrit target changed'
           fi
         fi
@@ -1838,7 +1839,7 @@ fi
 exec "$FM_TEST_REAL_GIT" "$@"
 SH
   chmod +x "$fakebin/git"
-  for action in base done; do
+  for action in base 'done'; do
     start=$(date +%s)
     status=0
     out=$(FM_HOME="$home" PATH="$fakebin:$PATH" bash -c '
