@@ -1692,7 +1692,7 @@ test_registered_base_and_push_only_contract() {
 }
 
 test_push_only_done_requires_exact_origin_head() {
-  local case_dir wt origin out note meta
+  local case_dir wt origin out note meta home
   case_dir="$TMP_ROOT/push-only-gate"
   wt="$case_dir/worktree"
   origin="$case_dir/origin.git"
@@ -1704,7 +1704,15 @@ test_push_only_done_requires_exact_origin_head() {
   git -C "$wt" checkout -q -b contrib/pushed
   git -C "$wt" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -q --allow-empty -m feature
   meta="$case_dir/state/pushed.meta"
-  printf 'mode=direct-PR\nforge=push-only\nbranch=contrib/pushed\n' > "$meta"
+  home="$case_dir"
+  mkdir -p "$home/data"
+  printf '%s\n' '- worktree [direct-PR forge=push-only] - fixture' > "$home/data/projects.md"
+  FM_HOME="$home" "$BRIEF" pushed worktree --scout >/dev/null 2>&1 || fail 'scout brief failed'
+  fill_brief_subsections "$home/data/pushed/brief.md" 'Ship this change.' 'Push the selected branch.'
+  printf 'kind=scout\nproject=%s\nworktree=%s\nforge=gerrit\n' "$wt" "$wt" > "$meta"
+  FM_HOME="$home" "$PROMOTE" pushed --mode direct-PR --yolo off --branch-prefix contrib/ >/dev/null 2>&1 \
+    || fail 'push-only promotion failed'
+  [ "$(sed -n 's/^forge=//p' "$meta")" = push-only ] || fail 'promotion did not replace the forge binding'
   note='done: branch contrib/pushed pushed to origin'
 
   push_gate() {
@@ -1719,6 +1727,13 @@ test_push_only_done_requires_exact_origin_head() {
   git -C "$wt" push -q origin contrib/pushed:refs/heads/contrib/pushed
   out=$(push_gate)
   [ -z "$out" ] || fail "published branch gate emitted a refusal: $out"
+
+  git --git-dir="$origin" update-ref -d refs/heads/contrib/pushed
+  git -C "$wt" show-ref --verify refs/remotes/origin/contrib/pushed >/dev/null || fail 'stale ref fixture missing'
+  if out=$(push_gate); then
+    fail 'promoted task accepted a deleted remote branch through a stale tracking ref'
+  fi
+  git -C "$wt" push -q origin contrib/pushed:refs/heads/contrib/pushed
 
   git -C "$wt" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -q --allow-empty -m later
   if out=$(push_gate); then
@@ -1794,6 +1809,58 @@ test_registered_base_reaches_worker_instructions() {
   pass 'registered bases survive generated setup, promotion, and delivery contracts'
 }
 
+test_origin_queries_are_bounded() {
+  local home wt fakebin out start elapsed status action
+  home="$TMP_ROOT/bounded-origin"
+  wt="$home/project"
+  fakebin="$home/bin"
+  mkdir -p "$home/data" "$home/state" "$fakebin"
+  git init -q -b develop "$wt"
+  git -C "$wt" -c user.name=test -c user.email=test@example.invalid commit -qm base --allow-empty
+  git clone -q --bare "$wt" "$home/origin.git"
+  git -C "$wt" remote add origin "$home/origin.git"
+  printf '%s\n' '- project [direct-PR forge=push-only base=develop] - fixture' > "$home/data/projects.md"
+  printf 'forge=push-only\nbranch=develop\n' > "$home/state/task.meta"
+  out=$(FM_HOME="$home" bash -uc 'unset SCRIPT_DIR; . "$1/bin/fm-ff-lib.sh"; default_branch "$2"' _ "$ROOT" "$wt") \
+    || fail 'standalone fast-forward library could not resolve registered base'
+  [ "$out" = develop ] || fail 'standalone base lookup returned wrong branch'
+  export FM_TEST_REAL_GIT FM_TEST_REMOTE_SHA
+  FM_TEST_REAL_GIT=$(command -v git)
+  FM_TEST_REMOTE_SHA=$(git -C "$wt" rev-parse HEAD)
+  cat > "$fakebin/git" <<'SH'
+#!/usr/bin/env bash
+if [ "${3:-}" = ls-remote ]; then
+  printf '%s\trefs/heads/develop\n' "$FM_TEST_REMOTE_SHA"
+  exec sleep 30
+fi
+exec "$FM_TEST_REAL_GIT" "$@"
+SH
+  chmod +x "$fakebin/git"
+  for action in base done; do
+    start=$(date +%s)
+    status=0
+    out=$(FM_HOME="$home" PATH="$fakebin:$PATH" bash -c '
+      if [ "$3" = base ]; then
+        . "$1/bin/fm-project-base-lib.sh"
+        fm_project_base_branch "$2"
+      else
+        . "$1/bin/fm-dod-lib.sh"
+        fm_dod_accept_ship_done ship direct-PR "$2" "$2" "done: branch develop pushed to origin" "$FM_HOME/state" task "$FM_HOME/state/task.meta"
+      fi
+    ' _ "$ROOT" "$wt" "$action" 2>&1) || status=$?
+    elapsed=$(( $(date +%s) - start ))
+    [ "$status" -ne 0 ] || fail "$action accepted partial output from a stalled origin query"
+    [ "$elapsed" -lt 20 ] || fail "$action origin query exceeded its deadline: ${elapsed}s"
+    case "$action" in
+      base) assert_contains "$out" 'origin cannot be read' 'base timeout did not fail closed' ;;
+      done) assert_contains "$out" 'does not hold named head' 'completion timeout did not fail closed' ;;
+    esac
+  done
+  unset FM_TEST_REAL_GIT FM_TEST_REMOTE_SHA
+  pass 'standalone base resolution works and both origin queries reject stalled partial output'
+}
+
+test_origin_queries_are_bounded
 test_registered_base_reaches_worker_instructions
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags

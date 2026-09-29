@@ -11,7 +11,8 @@ fm_project_base_branch() { # <project-dir> [registered-project-name]
     return 1
   }
   if [ -n "$registered" ]; then
-    remote_refs=$(git -C "$dir" ls-remote --exit-code --heads origin "refs/heads/$registered" 2>/dev/null) || remote_refs=
+    . "$script_dir/fm-timeout-lib.sh"
+    remote_refs=$(fm_run_timed 10 git -C "$dir" ls-remote --exit-code --heads origin "refs/heads/$registered" 2>/dev/null) || remote_refs=
     if ! printf '%s\n' "$remote_refs" | awk -v ref="refs/heads/$registered" '$2 == ref { found=1 } END { exit !found }'; then
       echo "error: registered base branch '$registered' for $name does not exist on origin or origin cannot be read" >&2
       return 1

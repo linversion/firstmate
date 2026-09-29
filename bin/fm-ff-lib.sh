@@ -48,7 +48,7 @@ first_line() {
 }
 
 # shellcheck source=bin/fm-project-base-lib.sh
-. "$SCRIPT_DIR/fm-project-base-lib.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-project-base-lib.sh"
 
 default_branch() {
   fm_project_base_branch "$1" "${2:-$(basename "$1")}"

@@ -694,7 +694,8 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
       printf '%s\n' "push-only done must report the recorded branch pushed to origin"
       return 1
     fi
-    remote_sha=$(git -C "$wt" ls-remote --heads origin "refs/heads/$branch" 2>/dev/null | awk -v r="refs/heads/$branch" '$2 == r {print $1}')
+    remote_sha=$(fm_run_timed 10 git -C "$wt" ls-remote --heads origin "refs/heads/$branch" 2>/dev/null) || remote_sha=
+    remote_sha=$(printf '%s\n' "$remote_sha" | awk -v r="refs/heads/$branch" '$2 == r {print $1}')
     if [ "$remote_sha" != "$sha" ]; then
       printf '%s\n' "origin branch $branch does not hold named head $sha"
       return 1
