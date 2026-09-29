@@ -1768,9 +1768,19 @@ SH
   fi
   assert_contains "$out" 'ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID is missing' 'missing environment value was not named'
   [ ! -s "$FM_TEST_CODEUP_LOG" ] || fail 'Codeup CLI ran without the required environment'
+  git -C "$wt" push -q origin contrib/codeup-task:refs/heads/contrib/remote-only
+  if out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/remote-only develop 2>&1); then
+    fail 'Codeup publication accepted a ship branch without a local branch'
+  fi
+  assert_contains "$out" 'local ship branch contrib/remote-only cannot supply a merge request title' 'missing local ship branch refusal was unclear'
+  if rg -q '^codeup-create-change-request ' "$FM_TEST_CODEUP_LOG"; then
+    fail 'Codeup publication created a request without a local ship branch'
+  fi
   out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
     "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop) || fail 'Codeup publication failed'
   [ "$out" = 'MR 7 https://codeup.aliyun.com/org/project/change/7' ] || fail "Codeup publication did not report the read-back request: $out"
+  rg -q '^codeup-create-change-request .* --title feature$' "$FM_TEST_CODEUP_LOG" || fail 'Codeup publication did not use the local ship branch subject'
   out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
     "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop) || fail 'Codeup publication retry failed'
   count=$(rg -c '^codeup-create-change-request ' "$FM_TEST_CODEUP_LOG")

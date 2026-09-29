@@ -92,8 +92,8 @@ if [ "$count" -gt 1 ]; then die "multiple open Codeup merge requests match $bran
 if [ "$count" -eq 1 ]; then
   local_id=$(printf '%s' "$matches" | jq -er '.[0].localId | select(type == "number" and . > 0 and . == floor)') || die 'matching Codeup merge request lacks a local ID'
 else
-  title=$(git -C "$wt" log -1 --format=%s "$branch" 2>/dev/null || true)
-  [ -n "$title" ] || title="Merge $branch into $base"
+  title=$(git -C "$wt" log -1 --format=%s "refs/heads/$branch" 2>/dev/null) || die "local ship branch $branch cannot supply a merge request title"
+  [ -n "$title" ] || die "local ship branch $branch has no commit subject for a merge request title"
   title=${title:0:256}
   created=$(codeup codeup-create-change-request --repository-id "$repo_id" --source-project-id "$repo_id" --source-branch "$branch" --target-project-id "$repo_id" --target-branch "$base" --title "$title") \
     || die 'Codeup merge request creation failed; retry publication to check for an existing request before creating'
