@@ -40,7 +40,7 @@
 #
 # Registered modes:
 #   no-mistakes            full pipeline -> PR -> configured merge authority (default)
-#   direct-PR              push + PR via gh-axi, no pipeline
+#   direct-PR              publish per fm-dod-lib.sh, no pipeline
 #   local-only             local branch, no remote/PR, guarded local merge
 #   no-mistakes-prod-only  a conditional policy, not a task mode: firstmate
 #                          classifies each task's surface at intake (the
@@ -69,10 +69,12 @@
 #   intake, and the captain's confirmation is what this record holds.
 #   Gerrit composes with no-mistakes and direct-PR; push-only requires direct-PR.
 #   Any forge binding is REFUSED on local-only, which publishes nothing: that mode
-#   lands by fast-forwarding local main, which on a review-server project
+#   lands by fast-forwarding the local base, which on a review-server project
 #   advances it with content the server has never seen
 #   (docs/gerrit-forge-integration.md section 3).
 #
+# A registered `forge=push-only` project reports yolo=off with a stderr refusal
+# when +yolo is registered, because remote landing remains a human action.
 # A registered `forge=gerrit` project reports yolo=off with an explicit stderr
 # refusal, on the captain's decision of 2026-09-15: a Gerrit Code-Review+2 is a
 # positive attributed claim that a named human approved, read by colleagues and

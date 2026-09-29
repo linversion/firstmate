@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Refresh project clones: fast-forward the checked-out local default branch to
-# origin/<default> when safe, and prune local branches whose upstream tracking
+# Refresh project clones: fast-forward the checked-out local base branch to
+# origin/<base> when safe, and prune local branches whose upstream tracking
 # branch is gone (the remote branch was deleted, i.e. its PR merged) and that no
 # worktree still needs.
+# Base selection follows bin/fm-project-base-lib.sh.
 # Self-heals the one unambiguously safe drift: a clean, detached HEAD that holds
-# no unique commits (it is an ancestor of origin/<default>) and whose <default>
+# no unique commits (it is an ancestor of origin/<base>) and whose <base>
 # branch is free to check out is re-attached and then fast-forwarded ("recovered:").
-# Every other off-default state - a non-default named branch, a detached HEAD with
-# unique commits, a dirty tree, or a diverged default - may hold real work, so it
+# Every other off-base state - a non-base named branch, a detached HEAD with
+# unique commits, a dirty tree, or a diverged base - may hold real work, so it
 # is left untouched and reported as a quantified, loud "STUCK: ... N commits behind
 # ... - needs attention" warning rather than a quiet drift. Nothing is ever forced,
 # stashed, or discarded.
@@ -282,7 +283,7 @@ stuck_state() {
 }
 
 # Loud, quantified report for a clone we deliberately leave untouched. Includes
-# how far behind origin/<default> it is, so a chronically-stuck clone is visibly
+# how far behind origin/<base> it is, so a chronically-stuck clone is visibly
 # distinct from a benign one-off skip.
 report_stuck() {
   local state=$1 behind

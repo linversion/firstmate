@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Review a crewmate branch against the authoritative base.
+# Base selection follows bin/fm-project-base-lib.sh.
 #
-# Pooled project clones do not keep their local default branch current, so this
-# helper compares remote-backed projects against origin/<default> after fetching
-# the default branch, and local-only projects against the local default branch.
+# Pooled project clones do not keep their local base branch current, so this
+# helper compares remote-backed projects against origin/<base> after fetching
+# the base branch, and local-only projects against the local base branch.
 # When state/<id>.meta records pr= as a GitHub pull-request URL or a bare
 # number for an open PR, the compare side is ALWAYS a freshly fetched
 # refs/pull/<n>/head by default so review stays current after no-mistakes fix

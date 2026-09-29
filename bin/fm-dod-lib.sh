@@ -59,6 +59,11 @@
 # changes is refused until it can be watched by its membership pinned when its
 # watch is armed, because the merge poll watches one change. No contract here
 # lets a worker submit, vote on, or abandon a change.
+# Push-only uses the rendered branch-published contract below. Its ready gate
+# requires the recorded branch and exact done note, then checks the named head
+# against that exact branch on live origin with a ten-second deadline; stale
+# remote-tracking refs and partial output from a timed-out query cannot pass.
+# tests/fm-task-delivery.test.sh covers that gate for promoted workers too.
 # The two PR-based blocks require a non-draft pull request before the done
 # report, read back from the forge; a lane that deliberately holds a draft
 # declares a paused wait instead. bin/fm-pr-check.sh refuses to arm merge

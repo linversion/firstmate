@@ -430,7 +430,8 @@ test_promotion_persists_the_selected_ship_branch() {
 test_promotion_branch_command_is_shell_safe() {
   local home id prefix marker meta instructions command repo branch
   home="$TMP_ROOT/promote-branch-shell-safe/home"
-  marker="$TMP_ROOT/promote-branch-shell-safe-marker"
+  # Absolute temporary paths can contain dot-prefixed components, invalid in refs.
+  marker=promote-branch-shell-safe-marker
   id=promote-branch-safe-e3
   prefix="\$(touch\${IFS}$marker)/"
   meta="$home/state/$id.meta"
@@ -440,8 +441,8 @@ test_promotion_branch_command_is_shell_safe() {
     || fail "shell-safe promotion scout brief should scaffold"
   fill_brief_subsections "$home/data/$id/brief.md" \
     "Promote the shell-safe fixture." "Use the configured branch exactly."
-  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" \
-    --mode local-only --yolo off --branch-prefix "$prefix" >/dev/null 2>&1 \
+  ( cd "$home" && FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" \
+    --mode local-only --yolo off --branch-prefix "$prefix" ) >/dev/null 2>&1 \
     || fail "a ref-format-valid metacharacter prefix should promote safely"
   instructions="$home/data/$id/ship-instructions.md"
   # shellcheck disable=SC2016  # Single quotes are required: the sed expression holds literal backticks.
@@ -450,7 +451,8 @@ test_promotion_branch_command_is_shell_safe() {
   repo="$TMP_ROOT/promote-branch-shell-safe-repo"
   git init -q "$repo" || fail "could not initialize shell-safety fixture repository"
   ( cd "$repo" && eval "$command" ) || fail "promotion branch-creation command did not run"
-  assert_absent "$marker" "promotion branch command executed the prefix's command substitution"
+  assert_absent "$home/$marker" "promotion executed the prefix's command substitution"
+  assert_absent "$repo/$marker" "promotion branch command executed the prefix's command substitution"
   branch=$(git -C "$repo" branch --show-current)
   [ "$branch" = "$prefix$id" ] \
     || fail "promotion branch command did not create the literal configured branch (got '$branch')"

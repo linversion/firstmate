@@ -2,6 +2,7 @@
 # Resolve a project's base branch. Registry format is owned by fm-project-mode.sh.
 # A registered base must name a branch on origin; the absence of that branch is
 # an error, never a reason to fall back to origin/HEAD or a local branch.
+# The live origin query has a ten-second deadline; unreadable origin fails closed.
 # Without a registered base, preserve the legacy origin/HEAD, main, master order.
 fm_project_base_branch() { # <project-dir> [registered-project-name]
   local dir=$1 name=${2:-$(basename "$1")} registered ref branch script_dir remote_refs
