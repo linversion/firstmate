@@ -824,6 +824,10 @@ if [ "$LIST_FILES" -eq 1 ]; then
   exit 0
 fi
 
+# A gate worktree may keep pinned tools locally without adding them to PATH.
+if ! command -v shellcheck >/dev/null 2>&1 && [ -x "$ROOT/.tools/bin/shellcheck" ]; then
+  export PATH="$PATH:$ROOT/.tools/bin"
+fi
 if ! command -v shellcheck >/dev/null 2>&1; then
   printf 'fm-lint.sh: ShellCheck not found; install ShellCheck %s with bin/fm-install-shellcheck.sh <destination-directory> and put that directory on PATH.\n' \
     "$REQUIRED_SHELLCHECK" >&2
