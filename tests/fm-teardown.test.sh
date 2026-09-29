@@ -1200,8 +1200,12 @@ SH
   git -C "$merged" add feature.txt
   git -C "$merged" -c user.email=t@t -c user.name=t commit -qm 'resolve merged content'
   git -C "$merged" push -q origin develop
+  git -C "$case_dir/project" fetch -q origin '+refs/heads/fm/task-x1:refs/remotes/origin/fm/task-x1'
+  [ "$(git -C "$case_dir/project" rev-parse refs/remotes/origin/fm/task-x1)" = "$(git -C "$case_dir/wt" rev-parse HEAD)" ] \
+    || fail 'stale remote-tracking reference fixture does not point at the ship head'
   git --git-dir="$case_dir/origin.git" update-ref -d refs/heads/fm/task-x1
-  git -C "$case_dir/project" fetch -q --prune origin
+  [ -z "$(git -C "$case_dir/wt" log --oneline HEAD --not --remotes -- 2>/dev/null)" ] \
+    || fail 'stale remote-tracking reference fixture still reports unpushed commits'
   rc=0
   FM_TEST_CODEUP_STATUS=CLOSED ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
     run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?

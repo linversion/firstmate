@@ -1911,6 +1911,18 @@ validate_worktree_teardown_safety() {
     echo "uncommitted changes present" >&2
     echo "Commit them (or get the captain's explicit OK to discard, then --force)." >&2
     return 1
+  elif [ "$(meta_value "$META" forge)" = push-only ]; then
+    branch=${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}
+    if [ -z "$branch" ]; then
+      branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+      TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=$branch
+    fi
+    if ! work_is_landed "$branch"; then
+      echo "REFUSED: worktree $WT has work not on any remote and not landed." >&2
+      [ -z "$unpushed" ] || printf 'unpushed commits:\n%s\n' "$unpushed" >&2
+      echo "Push the branch, land its Codeup merge request, or get the captain's explicit OK to discard, then --force." >&2
+      return 1
+    fi
   elif [ -n "$unpushed" ]; then
     branch=${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}
     if [ -z "$branch" ]; then

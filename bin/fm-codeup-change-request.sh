@@ -31,7 +31,15 @@ case "$origin" in
   git@codeup.aliyun.com:*) path=${origin#git@codeup.aliyun.com:} ;;
   ssh://git@codeup.aliyun.com/*) path=${origin#ssh://git@codeup.aliyun.com/} ;;
   https://codeup.aliyun.com/*) path=${origin#https://codeup.aliyun.com/} ;;
-  *) die "origin is not a Codeup remote: $origin" ;;
+  https://*@codeup.aliyun.com/*)
+    rest=${origin#https://}
+    authority=${rest%%/*}
+    userinfo=${authority%@codeup.aliyun.com}
+    userinfo=${userinfo%@}
+    [ -n "$userinfo" ] || die 'origin is not a Codeup remote'
+    path=${rest#"$authority"/}
+    ;;
+  *) die 'origin is not a Codeup remote' ;;
 esac
 path=${path%.git}
 case "$path" in */*) ;; *) die 'Codeup origin has no namespace/repository path' ;; esac

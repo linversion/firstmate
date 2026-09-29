@@ -1781,6 +1781,18 @@ SH
     "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop) || fail 'Codeup publication failed'
   [ "$out" = 'MR 7 https://codeup.aliyun.com/org/project/change/7' ] || fail "Codeup publication did not report the read-back request: $out"
   rg -q '^codeup-create-change-request .* --title feature$' "$FM_TEST_CODEUP_LOG" || fail 'Codeup publication did not use the local ship branch subject'
+  git -C "$wt" remote set-url origin 'https://user:secret-token@codeup.aliyun.com/org/project.git'
+  out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop) || fail "credentialed Codeup origin was rejected: $out"
+  [ "$out" = 'MR 7 https://codeup.aliyun.com/org/project/change/7' ] || fail "credentialed Codeup publication changed its result: $out"
+  rg -q '^codeup-get-repository --repository-id org%2Fproject$' "$FM_TEST_CODEUP_LOG" || fail 'credentialed Codeup origin included credentials in the repository ID'
+  git -C "$wt" remote set-url origin 'https://user:secret-token@not-codeup.invalid/org/project.git'
+  if out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop 2>&1); then
+    fail 'non-Codeup credentialed origin was accepted'
+  fi
+  assert_not_contains "$out" 'secret-token' 'Codeup origin refusal exposed URL credentials'
+  git -C "$wt" remote set-url origin 'git@codeup.aliyun.com:org/project.git'
   out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
     "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop) || fail 'Codeup publication retry failed'
   count=$(rg -c '^codeup-create-change-request ' "$FM_TEST_CODEUP_LOG")

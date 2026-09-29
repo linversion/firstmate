@@ -399,6 +399,30 @@ test_registered_base_syncs_develop() {
   pass "fleet sync advances the registered base and names a missing remote branch"
 }
 
+test_registered_base_survives_pruning_when_remote_is_missing() {
+  local home clone work before out
+  home=$(new_home)
+  clone=$(build_pair "$home" protectedbase)
+  work="$home/work-protectedbase"
+  mkdir -p "$home/data"
+  printf '%s\n' '- protectedbase [direct-PR base=develop] - fixture' > "$home/data/projects.md"
+  git -C "$work" checkout -q -b develop
+  git -C "$work" push -q origin develop
+  git -C "$clone" fetch -q origin develop
+  git -C "$clone" checkout -q -b develop origin/develop
+  commit_file "$clone" base.txt local 'local develop work'
+  before=$(git -C "$clone" rev-parse refs/heads/develop)
+  git -C "$clone" checkout -q main
+  git --git-dir="$home/remotes/protectedbase.git" update-ref -d refs/heads/develop
+
+  out=$(run_sync "$home" protectedbase)
+
+  assert_contains "$out" 'cannot determine default branch' 'missing registered base was not reported after fetch'
+  [ "$(git -C "$clone" rev-parse refs/heads/develop)" = "$before" ] \
+    || fail 'fleet sync pruned the local registered base with unique commits'
+  pass 'fleet sync preserves the registered base when its remote branch is gone'
+}
+
 test_already_current_unchanged() {
   local home clone out before
   home=$(new_home)
@@ -757,6 +781,7 @@ test_non_default_branch_is_stuck_untouched
 test_diverged_is_stuck_untouched
 test_on_default_clean_behind_fast_forwards
 test_registered_base_syncs_develop
+test_registered_base_survives_pruning_when_remote_is_missing
 test_already_current_unchanged
 test_no_origin_skipped
 test_local_only_skipped

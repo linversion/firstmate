@@ -225,7 +225,7 @@ prune_gone_branches() {
   # net. Set FM_FLEET_PRUNE=0 to skip pruning entirely.
   [ "${FM_FLEET_PRUNE:-1}" != "0" ] || return 0
 
-  local worktree_branches current refline branch track
+  local worktree_branches current refline branch track protected_base=${1:-}
   worktree_branches=$(git -C "$PROJ" worktree list --porcelain 2>/dev/null \
     | sed -n 's#^branch refs/heads/##p')
   current=$(git -C "$PROJ" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
@@ -235,6 +235,7 @@ prune_gone_branches() {
     track=${refline#* }
     [ "$track" = "[gone]" ] || continue
     [ -n "$branch" ] || continue
+    [ "$branch" != "$protected_base" ] || continue
     [ "$branch" != "$current" ] || continue
     if printf '%s\n' "$worktree_branches" | grep -Fxq -- "$branch"; then
       continue
@@ -292,6 +293,7 @@ report_stuck() {
 }
 
 sync_project() {
+  local registered_base
   PROJ=$1
   label=$(project_label)
 
@@ -347,12 +349,17 @@ sync_project() {
     return 0
   fi
 
-  prune_gone_branches || true
+  registered_base=$("$FM_ROOT/bin/fm-project-mode.sh" --base-branch "$label") || {
+    echo "$label: skipped: cannot determine registered base branch"
+    return 0
+  }
+  prune_gone_branches "$registered_base" || true
 
   DEFAULT=$(default_branch) || {
     echo "$label: skipped: cannot determine default branch"
     return 0
   }
+
   BASE="origin/$DEFAULT"
   if ! git -C "$PROJ" rev-parse --verify --quiet "$BASE^{commit}" >/dev/null; then
     echo "$label: skipped: $BASE does not exist"
