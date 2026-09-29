@@ -47,20 +47,11 @@ first_line() {
   printf '%s\n' "$1" | sed -n '1s/[[:space:]]\{1,\}/ /g;1p'
 }
 
+# shellcheck source=bin/fm-project-base-lib.sh
+. "$SCRIPT_DIR/fm-project-base-lib.sh"
+
 default_branch() {
-  local dir=$1 ref branch
-  ref=$(git -C "$dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
-  if [ -n "$ref" ]; then
-    echo "${ref#origin/}"
-    return 0
-  fi
-  for branch in main master; do
-    if git -C "$dir" show-ref --verify --quiet "refs/heads/$branch"; then
-      echo "$branch"
-      return 0
-    fi
-  done
-  return 1
+  fm_project_base_branch "$1" "${2:-$(basename "$1")}"
 }
 
 # Resolve the PRIMARY checkout's current default-branch commit - the local-HEAD

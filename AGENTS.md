@@ -226,7 +226,7 @@ If fast-path risk needs more rigor, escalate whether to use no-mistakes instead 
 The path's worker, automated gates, and captain approval remain authoritative:
 
 - **no-mistakes** runs the full pipeline through a PR, then waits for the configured merge authority.
-- **direct-PR** has the worker push and open a PR without the no-mistakes pipeline, then waits for the configured merge authority.
+- **direct-PR** follows the worker publication contract in `bin/fm-dod-lib.sh` without the no-mistakes pipeline; the ordinary GitHub path opens a PR and then waits for configured merge authority.
 - **local-only** has the worker stop with a clean ready branch, then waits for the configured merge authority before firstmate uses the guarded fast-forward merge path.
 
 Delivery mode and `yolo` are orthogonal.

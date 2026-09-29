@@ -215,6 +215,51 @@ test_non_main_default_branch_refreshes_before_branching() {
   pass "a stale pooled worktree resolves and refreshes a non-main default branch"
 }
 
+test_registered_base_overrides_remote_head() {
+  local rec id out status develop_head
+  id='pool-registered-develop-r1'
+  rec=$(make_case registered-develop "$id")
+  read_case_record "$rec"
+  printf '%s\n' '- project [no-mistakes base=develop] - fixture' > "$HOME_DIR/data/projects.md"
+  git -C "$CASE_DIR/publisher" checkout -q -b develop
+  printf 'integration branch\n' > "$CASE_DIR/publisher/integration.txt"
+  git -C "$CASE_DIR/publisher" add integration.txt
+  git -C "$CASE_DIR/publisher" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -qm integration
+  git -C "$CASE_DIR/publisher" push -q origin develop
+  develop_head=$(git -C "$CASE_DIR/publisher" rev-parse HEAD)
+
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "registered develop should be selected: $out"
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$develop_head" ] \
+    || fail "spawn chose origin/HEAD instead of the registered develop branch"
+  [ -f "$POOL_DIR/integration.txt" ] || fail "spawned tree omitted develop-only content"
+
+  id='pool-missing-develop-r1'
+  rec=$(make_case missing-develop "$id")
+  read_case_record "$rec"
+  printf '%s\n' '- project [no-mistakes base=missing-develop] - fixture' > "$HOME_DIR/data/projects.md"
+  git -C "$CASE_DIR/publisher" checkout -q -b other/missing-develop
+  git -C "$CASE_DIR/publisher" push -q origin other/missing-develop
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted a registered base absent from origin"
+  assert_contains "$out" "registered base branch 'missing-develop'" \
+    "missing base refusal did not name the registered branch"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "missing base published task metadata"
+
+  id='pool-no-origin-develop-r1'
+  rec=$(make_originless_case no-origin-develop "$id")
+  read_case_record "$rec"
+  printf '%s\n' '- project [no-mistakes base=develop] - fixture' > "$HOME_DIR/data/projects.md"
+  out=$(run_spawn "$id" --mode no-mistakes --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted a registered remote base without origin"
+  assert_contains "$out" "registered base branch 'develop' requires an origin remote" \
+    "origin-less refusal did not name the registered base"
+  pass "spawn uses the registered remote base and refuses one missing from origin"
+}
+
 make_originless_case() {  # <name> <id>
   local name=$1 id=$2 case_dir home project pool fakebin initial
   case_dir="$TMP_ROOT/$name"
@@ -748,6 +793,7 @@ test_pool_slot_claim_follows_the_spawn_outcome
 test_linked_spawning_home_rejects_primary_before_refresh
 test_stale_pool_base_refreshes_before_branching
 test_non_main_default_branch_refreshes_before_branching
+test_registered_base_overrides_remote_head
 test_direct_pr_and_scout_refresh_before_launch
 test_dirty_pool_refuses_without_discarding_work
 test_unresolved_remote_default_refuses_pool

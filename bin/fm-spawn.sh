@@ -3127,6 +3127,10 @@ if [ "$KIND" = ship ]; then
     echo "error: --yolo on is refused for $ID: $PROJ_NAME is registered forge=gerrit, where yolo is inactive because a Code-Review+2 is a positive attributed claim that a named human approved and firstmate must not manufacture one (captain's decision 2026-09-15); spawn with --yolo off" >&2
     exit 1
   fi
+  if [ "$STANDING_FORGE" = push-only ] && [ "$YOLO" = on ]; then
+    echo "error: --yolo on is refused for $ID: forge=push-only leaves merge request creation and landing to a human" >&2
+    exit 1
+  fi
   # The registry holds the captain's standing posture, so dropping below it is
   # allowed (a current explicit captain instruction wins) but never silent. An
   # unregistered project resolves to the same no-mistakes standing default, which
@@ -3324,18 +3328,24 @@ freshen_spawn_worktree_base() { # <worktree>
     fi
     return 1
   fi
+  local registered_base
+  registered_base=$("$FM_ROOT/bin/fm-project-mode.sh" --base-branch "$(basename "$PROJ_ABS")") || return 1
   if ! spawn_worktree_has_origin_config "$worktree"; then
+    if [ -n "$registered_base" ]; then
+      echo "error: registered base branch '$registered_base' requires an origin remote for pooled worktree '$worktree'" >&2
+      return 1
+    fi
     return 0
   fi
   if ! git -C "$worktree" fetch --quiet origin; then
     echo "error: could not fetch origin for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
     return 1
   fi
-  if ! git -C "$worktree" remote set-head origin --auto >/dev/null 2>&1; then
+  if [ -z "$registered_base" ] && ! git -C "$worktree" remote set-head origin --auto >/dev/null 2>&1; then
     echo "error: could not resolve origin's current default branch for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
     return 1
   fi
-  default=$(default_branch "$worktree") || {
+  default=$(default_branch "$worktree" "$(basename "$PROJ_ABS")") || {
     echo "error: could not determine origin's default branch for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
     return 1
   }
@@ -4873,6 +4883,7 @@ preserve_relaunch_meta() {
   echo "harness=$HARNESS"
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"
+  [ -z "${STANDING_FORGE:-}" ] || [ "$STANDING_FORGE" = none ] || echo "forge=$STANDING_FORGE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
   [ -z "${BRANCH:-}" ] || echo "branch=$BRANCH"
   echo "tasktmp=$TASK_TMP"

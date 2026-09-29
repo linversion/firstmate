@@ -1123,6 +1123,46 @@ SH
   pass "worktree whose content already landed in the default branch is torn down (content fallback)"
 }
 
+test_registered_base_controls_content_landed_check() {
+  local case_dir rc tmp
+  case_dir=$(make_case content-registered-base)
+  write_meta "$case_dir" no-mistakes ship
+  mkdir -p "$case_dir/data"
+  printf '%s\n' '- project [no-mistakes base=develop] - fixture' > "$case_dir/data/projects.md"
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  tmp="$case_dir/_develop"
+  git clone -q "$case_dir/origin.git" "$tmp"
+  git -C "$tmp" checkout -q -b develop
+  printf 'hello\n' > "$tmp/feature.txt"
+  git -C "$tmp" add feature.txt
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -qm "land on develop"
+  git -C "$tmp" push -q origin develop
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "registered-base content check should accept work landed on develop"
+  assert_absent "$case_dir/state/task-x1.meta" \
+    "registered-base teardown left metadata after proving content landed on develop"
+
+  case_dir=$(make_case content-missing-base)
+  write_meta "$case_dir" no-mistakes ship
+  mkdir -p "$case_dir/data"
+  printf '%s\n' '- project [no-mistakes base=missing-develop] - fixture' > "$case_dir/data/projects.md"
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "teardown accepted a missing registered base"
+  assert_grep "registered base branch 'missing-develop'" "$case_dir/stderr" \
+    "teardown did not name the missing registered base"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "teardown removed task metadata despite the missing base"
+  pass "teardown checks landed content against registered develop and preserves work on missing base"
+}
+
 test_content_fallback_refreshes_stale_origin_ref() {
   local case_dir rc
   case_dir=$(make_case content-stale-ref)
@@ -4289,6 +4329,7 @@ test_squash_merged_stale_local_refuses_when_forge_unreachable
 test_pr_check_does_not_refresh_stale_pr_head
 test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_fallback_allows
+test_registered_base_controls_content_landed_check
 test_content_fallback_refreshes_stale_origin_ref
 test_dirty_worktree_refuses
 test_gh_error_and_content_absent_refuses

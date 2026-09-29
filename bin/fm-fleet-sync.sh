@@ -117,20 +117,11 @@ resolve_project_arg() {
   printf '%s\n' "$arg"
 }
 
+# shellcheck source=bin/fm-project-base-lib.sh
+. "$SCRIPT_DIR/fm-project-base-lib.sh"
+
 default_branch() {
-  local ref branch
-  ref=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
-  if [ -n "$ref" ]; then
-    echo "${ref#origin/}"
-    return 0
-  fi
-  for branch in main master; do
-    if git -C "$PROJ" show-ref --verify --quiet "refs/heads/$branch"; then
-      echo "$branch"
-      return 0
-    fi
-  done
-  return 1
+  fm_project_base_branch "$PROJ"
 }
 
 first_line() {
@@ -336,6 +327,12 @@ sync_project() {
     return 0
   fi
   if ! git -C "$PROJ" remote get-url origin >/dev/null 2>&1; then
+    local registered_base
+    registered_base=$("$FM_ROOT/bin/fm-project-mode.sh" --base-branch "$label") || return 1
+    if [ -n "$registered_base" ]; then
+      echo "$label: skipped: registered base branch '$registered_base' requires an origin remote"
+      return 0
+    fi
     echo "$label: skipped: no origin remote"
     return 0
   fi

@@ -43,11 +43,11 @@
 # appends " forge=gerrit shape=squash" to that line. The "Ship branch: <branch>"
 # line under it is machine-readable the same way: bin/fm-spawn.sh refuses a ship
 # whose spawn-selected branch disagrees with it.
-# forge is none|gerrit and defaults to none; bin/fm-project-mode.sh's header owns
+# forge is none|gerrit|push-only and defaults to none; bin/fm-project-mode.sh's header owns
 # what the registry binding means, and this file owns what gerrit changes for a
-# WORKER (docs/gerrit-forge-integration.md is the design). A forge composes with
-# the two modes that publish and is refused on local-only, which publishes
-# nothing. On gerrit the worker publishes one squashed change with
+# WORKER (docs/gerrit-forge-integration.md is the design). Gerrit composes with
+# the two modes that publish; push-only applies to direct-PR, and neither binds
+# local-only. On gerrit the worker publishes one squashed change with
 # `gerrit-axi publish --squash` instead of opening a pull request: direct-PR does
 # that straight away, and no-mistakes first runs the pipeline with its three
 # forge-facing steps skipped and recovers the pipeline's own fix commits into its
@@ -128,13 +128,17 @@ EOF
 fm_forge_valid_for_mode() {  # <forge> <mode> <caller>
   local forge=$1 mode=$2 caller=$3
   case "$forge" in
-    none|gerrit) ;;
+    none|gerrit|push-only) ;;
     *)
-      echo "error: $caller: unknown forge '$forge' (expected none or gerrit)" >&2
+      echo "error: $caller: unknown forge '$forge' (expected none, gerrit, or push-only)" >&2
       return 1 ;;
   esac
   if [ "$forge" != none ] && [ "$mode" = local-only ]; then
     echo "error: $caller: forge=$forge cannot ship mode=local-only - that mode publishes nothing, so a forge has no meaning there, and its landing would fast-forward local main with content the review server has never seen; ship no-mistakes or direct-PR, which publish through the forge" >&2
+    return 1
+  fi
+  if [ "$forge" = push-only ] && [ "$mode" != direct-PR ]; then
+    echo "error: $caller: forge=push-only requires mode=direct-PR" >&2
     return 1
   fi
   return 0
@@ -148,12 +152,16 @@ fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id> [branch] [<
     printf '%s\n' "1. Never push with git and never create a change except through the one \`gerrit-axi publish --squash\` your Definition of done names. Never run \`gerrit-axi submit\`, never vote or review a change by any path, including \`gerrit review\` or a label option on a push, and never abandon one: a human reviewer approves and submits it on the server."
     return 0
   fi
+  if [ "$forge" = push-only ]; then
+    printf '%s\n' "1. Never push to the base branch (push only your \`$branch\` branch). Never merge or open a pull request; a human handles any merge request on the remote."
+    return 0
+  fi
   case "$mode" in
     direct-PR)
       printf '%s\n' "1. Never push to the default branch (push only your \`$branch\` branch). Never merge a PR."
       ;;
     local-only)
-      printf '%s\n' "1. Never push to any remote and never open a PR. Work only on your \`$branch\` branch; firstmate handles the merge into local \`main\`."
+      printf '%s\n' "1. Never push to any remote and never open a PR. Work only on your \`$branch\` branch; firstmate handles the merge into the project's local base branch."
       ;;
     no-mistakes)
       printf '%s\n' '1. Never push to the default branch. Never merge a PR.'
@@ -340,9 +348,24 @@ EOF
 
 fm_dod_block() {  # <mode> <task-id> [branch] [<forge>]
   local mode=$1 id=$2 forge=${4:-none}
-  local branch=${3:-fm/$id}
+  local branch=${3:-fm/$id} refspec_q
   fm_forge_valid_for_mode "$forge" "$mode" fm_dod_block || return 1
   case "$mode:$forge" in
+    direct-PR:push-only)
+      printf -v refspec_q '%q' "$branch:refs/heads/$branch"
+      cat <<EOF
+# Definition of done
+Delivery contract: mode=direct-PR forge=push-only
+Ship branch: $branch
+This task publishes its branch to origin with plain git and stops; there is no pull request or forge integration in this delivery.
+The task is complete only when committed on your branch \`$branch\`.
+When implementation is committed, run \`git push origin $refspec_q\` from your worktree and verify origin holds your HEAD at that exact branch.
+Append \`done [at=<epoch>]: branch $branch pushed to origin\` to the status file and stop.
+Do not open a pull request or a merge request.
+A human must open any merge request on the remote, review it, and merge the branch into the registered base branch; firstmate does not do those remote steps.
+Do NOT run /no-mistakes.
+EOF
+      ;;
     direct-PR:gerrit)
       cat <<EOF
 # Definition of done
@@ -414,9 +437,9 @@ Ship branch: $branch
 This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`$branch\`. Do NOT push, do NOT open a PR, do NOT merge.
 A \`done:\` is accepted when the named head is on this project's shared local branch, not only on a detached copy; the check tests that head, not merely that a branch moved.
-Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+Keep your branch a clean fast-forward onto the current base branch - if the base has advanced, rebase onto it so the eventual merge stays a fast-forward.
 When it is implemented and committed, append \`done [at=<epoch>]: ready in branch $branch\` to the status file and stop.
-The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
+The configured merge authority approves the ready branch, then firstmate merges it into the local base branch through the guarded fast-forward path.
 EOF
       ;;
     no-mistakes:*)
@@ -628,9 +651,11 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 # pr_head=, and the merge-notified marker; <meta> may be a captured copy
 # (bin/fm-fleet-snapshot.sh), so the marker is read from <state>.
 fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta>]
-  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit
+  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit forge branch remote_sha note
   fm_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0
-  if url=$(fm_dod_pr_url_from_done_note "$(status_line_note "$line")") \
+  forge=$(fm_dod_meta_value "$meta" forge)
+  if [ "$forge" != push-only ] \
+    && url=$(fm_dod_pr_url_from_done_note "$(status_line_note "$line")") \
     && fm_dod_recorded_pr_on_forge "$state" "$id" "$meta" "$mode" "$url"; then
     return 0
   fi
@@ -646,6 +671,20 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     printf '%s\n' "named head could not be resolved"
     return 1
   }
+  if [ "$forge" = push-only ]; then
+    branch=$(fm_dod_meta_value "$meta" branch)
+    note=$(status_line_note "$line")
+    if [ -z "$branch" ] || [ "$note" != "branch $branch pushed to origin" ]; then
+      printf '%s\n' "push-only done must report the recorded branch pushed to origin"
+      return 1
+    fi
+    remote_sha=$(git -C "$wt" ls-remote --heads origin "refs/heads/$branch" 2>/dev/null | awk -v r="refs/heads/$branch" '$2 == r {print $1}')
+    if [ "$remote_sha" != "$sha" ]; then
+      printf '%s\n' "origin branch $branch does not hold named head $sha"
+      return 1
+    fi
+    return 0
+  fi
   gerrit=0
   [ -n "$url" ] && fm_pr_url_parse "$url" && [ "$FM_PR_PROVIDER" = gerrit ] && gerrit=1
   if [ "$gerrit" = 0 ] && fm_dod_note_reports_published_change "$(status_line_note "$line")"; then

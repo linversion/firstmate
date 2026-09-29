@@ -1327,20 +1327,11 @@ elif [ "$FORCE" != "--force" ] && fm_pf_relay_active "$FM_HOME"; then
   PUBLIC_FOLLOWUP_RELAY_ACTIVE=1
 fi
 
+# shellcheck source=bin/fm-project-base-lib.sh
+. "$SCRIPT_DIR/fm-project-base-lib.sh"
+
 default_branch() {
-  local ref branch
-  ref=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
-  if [ -n "$ref" ]; then
-    echo "${ref#origin/}"
-    return 0
-  fi
-  for branch in main master; do
-    if git -C "$PROJ" show-ref --verify --quiet "refs/heads/$branch"; then
-      echo "$branch"
-      return 0
-    fi
-  done
-  return 1
+  fm_project_base_branch "$PROJ"
 }
 
 meta_value() {

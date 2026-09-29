@@ -489,6 +489,45 @@ EOF
   pass "fm-merge-local: a registry change cannot redirect an in-flight local-only task"
 }
 
+test_local_merge_uses_registered_base() {
+  local home proj origin id default base_tip fix out
+  home="$TMP_ROOT/local-merge-base/home"
+  proj="$TMP_ROOT/local-merge-base/proj"
+  origin="$TMP_ROOT/local-merge-base/origin.git"
+  id=local-merge-base-e2
+  mkdir -p "$home/state" "$home/data" "$proj"
+  git -C "$proj" init -q
+  git -C "$proj" config user.email test@example.com
+  git -C "$proj" config user.name test
+  git -C "$proj" commit -q --allow-empty -m base
+  default=$(git -C "$proj" branch --show-current)
+  git init -q --bare "$origin"
+  git -C "$proj" remote add origin "$origin"
+  git -C "$proj" push -q origin "$default"
+  git -C "$proj" checkout -q -b develop
+  printf 'integration\n' > "$proj/integration"
+  git -C "$proj" add integration
+  git -C "$proj" commit -qm integration
+  git -C "$proj" push -q origin develop
+  base_tip=$(git -C "$proj" rev-parse HEAD)
+  git -C "$proj" checkout -q -b "fix/$id"
+  printf 'ship\n' > "$proj/ship"
+  git -C "$proj" add ship
+  git -C "$proj" commit -qm ship
+  fix=$(git -C "$proj" rev-parse HEAD)
+  git -C "$proj" checkout -q develop
+  printf '%s\n' '- proj [local-only base=develop] - fixture' > "$home/data/projects.md"
+  printf 'project=%s\nmode=local-only\nbranch=fix/%s\n' "$proj" "$id" > "$home/state/$id.meta"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$MERGE_LOCAL" "$id") \
+    || fail "local merge refused registered develop base: $out"
+  [ "$(git -C "$proj" rev-parse develop)" = "$fix" ] \
+    || fail "local merge did not advance registered develop"
+  [ "$(git -C "$proj" rev-parse "$default")" != "$fix" ] \
+    || fail "local merge advanced remote default instead of registered develop"
+  [ "$base_tip" != "$fix" ] || fail "fixture did not advance the ship branch"
+  pass "local merge lands on registered develop while the remote default stays put"
+}
+
 # A registered name may contain spaces, and the lookup must match the whole
 # name rather than only its first whitespace-delimited token (issue #1977).
 # The longer "foo bar" row is listed before the "foo" row so a leading-prefix
@@ -1612,6 +1651,83 @@ EOF
   pass "fm-project-mode: --branch-prefix resolves order-independently and defaults to the legacy fm/ prefix"
 }
 
+test_registered_base_and_push_only_contract() {
+  local home out status brief
+  home="$TMP_ROOT/push-only/home"
+  mkdir -p "$home/data"
+  printf '%s\n' '- project [base=develop direct-PR branch=contrib/ forge=push-only] - fixture' > "$home/data/projects.md"
+  out=$(FM_HOME="$home" "$PROJECT_MODE" project)
+  [ "$out" = 'direct-PR off' ] || fail "base and push-only changed default posture: $out"
+  out=$(FM_HOME="$home" "$PROJECT_MODE" --base-branch project)
+  [ "$out" = develop ] || fail "registered base did not resolve to develop: $out"
+  out=$(FM_HOME="$home" "$PROJECT_MODE" --forge project)
+  [ "$out" = push-only ] || fail "push-only forge binding was not exposed: $out"
+  out=$(FM_HOME="$home" "$PROJECT_MODE" --branch-prefix project)
+  [ "$out" = contrib/ ] || fail "base token changed ship prefix: $out"
+  out=$(FM_HOME="$home" "$BRIEF" push-only-task project --mode direct-PR --branch-prefix contrib/ --forge push-only)
+  status=$?
+  [ "$status" -eq 0 ] || fail "push-only brief refused: $out"
+  brief="$home/data/push-only-task/brief.md"
+  assert_grep 'Delivery contract: mode=direct-PR forge=push-only' "$brief" \
+    "brief did not record push-only delivery"
+  assert_grep 'git push origin contrib/push-only-task:refs/heads/contrib/push-only-task' "$brief" \
+    "brief did not give an exact branch push"
+  assert_grep 'A human must open any merge request' "$brief" \
+    "brief did not stop at the human remote action"
+  assert_no_grep 'gh-axi pr create' "$brief" "push-only brief asked for GitHub PR creation"
+  printf '%s\n' '- project [direct-PR forge=push-only +yolo] - fixture' > "$home/data/projects.md"
+  out=$(FM_HOME="$home" "$PROJECT_MODE" project 2>/dev/null)
+  [ "$out" = 'direct-PR off' ] || fail "push-only allowed standing autonomous merge authority"
+  printf '%s\n' '- project [no-mistakes forge=push-only] - fixture' > "$home/data/projects.md"
+  if out=$(FM_HOME="$home" "$PROJECT_MODE" project 2>&1); then
+    fail "push-only forge accepted the no-mistakes PR pipeline"
+  fi
+  assert_contains "$out" 'requires direct-PR mode' "unsupported push-only mode refusal was unclear"
+  printf '%s\n' '- project [direct-PR base=] - fixture' > "$home/data/projects.md"
+  if out=$(FM_HOME="$home" "$PROJECT_MODE" --base-branch project 2>&1); then
+    fail "empty registered base was accepted"
+  fi
+  assert_contains "$out" "invalid base branch" "empty base refusal was not explicit"
+  pass "registry base query and push-only brief preserve default posture and stop after branch push"
+}
+
+test_push_only_done_requires_exact_origin_head() {
+  local case_dir wt origin out note meta
+  case_dir="$TMP_ROOT/push-only-gate"
+  wt="$case_dir/worktree"
+  origin="$case_dir/origin.git"
+  mkdir -p "$case_dir/state"
+  git init -q -b main "$case_dir/seed"
+  git -C "$case_dir/seed" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -q --allow-empty -m base
+  git clone -q --bare "$case_dir/seed" "$origin"
+  git clone -q "$origin" "$wt"
+  git -C "$wt" checkout -q -b contrib/pushed
+  git -C "$wt" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -q --allow-empty -m feature
+  meta="$case_dir/state/pushed.meta"
+  printf 'mode=direct-PR\nforge=push-only\nbranch=contrib/pushed\n' > "$meta"
+  note='done: branch contrib/pushed pushed to origin'
+
+  push_gate() {
+    bash -c '. "$1"; fm_dod_accept_ship_done ship direct-PR "$2" "$2" "$3" "$4" pushed "$5"' \
+      _ "$ROOT/bin/fm-dod-lib.sh" "$wt" "$note" "$case_dir/state" "$meta"
+  }
+  if out=$(push_gate); then
+    fail "push-only done was accepted before the branch reached origin"
+  fi
+  assert_contains "$out" 'does not hold named head' "unpublished branch refusal did not name origin"
+
+  git -C "$wt" push -q origin contrib/pushed:refs/heads/contrib/pushed
+  out=$(push_gate)
+  [ -z "$out" ] || fail "published branch gate emitted a refusal: $out"
+
+  git -C "$wt" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -q --allow-empty -m later
+  if out=$(push_gate); then
+    fail "push-only done accepted a later unpushed commit"
+  fi
+  assert_contains "$out" 'does not hold named head' "later commit refusal did not name the remote mismatch"
+  pass "push-only done is accepted only for the exact ship head on origin"
+}
+
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
@@ -1623,6 +1739,7 @@ test_promotion_delivers_the_real_definition_of_done
 test_promotion_persists_the_selected_ship_branch
 test_promotion_branch_command_is_shell_safe
 test_local_merge_uses_the_recorded_ship_branch
+test_local_merge_uses_registered_base
 test_project_mode_matches_whole_multiword_names
 test_project_mode_maps_the_conditional_policy
 test_project_mode_binds_the_forge_orthogonally
@@ -1637,4 +1754,6 @@ test_spawn_refuses_a_registry_forge_it_cannot_read
 test_promotion_carries_the_forge_binding
 test_spawn_and_promote_require_filled_task_subsections
 test_project_mode_resolves_branch_prefix
+test_registered_base_and_push_only_contract
+test_push_only_done_requires_exact_origin_head
 echo "# all fm-task-delivery tests passed"
