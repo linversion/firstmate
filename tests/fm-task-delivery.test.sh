@@ -1728,6 +1728,73 @@ test_push_only_done_requires_exact_origin_head() {
   pass "push-only done is accepted only for the exact ship head on origin"
 }
 
+test_registered_base_reaches_worker_instructions() {
+  local home mode forge forge_annotation base annotation id out ship scout promoted replay expected n=0
+  home="$TMP_ROOT/instruction-base/home"
+  mkdir -p "$home/data" "$home/state"
+  for base in develop 'release/$stable' ''; do
+    annotation=
+    [ -z "$base" ] || annotation=" base=$base"
+    for mode in direct-PR no-mistakes local-only; do
+      for forge in none gerrit push-only; do
+        case "$mode:$forge" in
+          local-only:gerrit|local-only:push-only|no-mistakes:push-only) continue ;;
+        esac
+        n=$((n + 1))
+        id="instruction-base-$n"
+        forge_annotation=
+        [ "$forge" = none ] || forge_annotation=" forge=$forge"
+        printf '%s\n' "- fixture-project [$mode$forge_annotation$annotation] - fixture" > "$home/data/projects.md"
+        FM_HOME="$home" "$BRIEF" "$id-ship" fixture-project --mode "$mode" --forge "$forge" >/dev/null 2>&1 \
+          || fail "could not generate $mode/$forge ship brief"
+        ship=$(cat "$home/data/$id-ship/brief.md")
+        FM_HOME="$home" "$BRIEF" "$id" fixture-project --scout >/dev/null 2>&1 \
+          || fail "could not generate scout brief"
+        scout=$(cat "$home/data/$id/brief.md")
+        fill_brief_subsections "$home/data/$id/brief.md" 'Ship the selected change.' 'Implement the selected change.'
+        printf 'window=fm-%s\nkind=scout\nproject=%s/fixture-project\nworktree=%s/wt\n' \
+          "$id" "$home" "$home" > "$home/state/$id.meta"
+        out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode "$mode" --yolo off 2>&1) \
+          || fail "could not promote $mode/$forge: $out"
+        promoted=$(cat "$home/data/$id/ship-instructions.md")
+        replay=$(cat "$home/data/$id/brief.md")
+        if [ -n "$base" ]; then
+          assert_contains "$ship" "on the registered base branch \`$base\`" 'ship setup lost base'
+          assert_contains "$scout" "on the registered base branch \`$base\`" 'scout setup lost base'
+          printf -v expected 'git checkout -b fm/%s %q --' "$id" "origin/$base"
+          assert_contains "$promoted" "$expected" 'promotion lost base'
+          assert_contains "$replay" "$expected" 'relaunch lost base'
+          if [ "$forge" = gerrit ]; then
+            printf -v expected 'gerrit-axi publish --squash --json --branch %q' "$base"
+            assert_contains "$ship" "$expected" 'ship Gerrit target lost base'
+            assert_contains "$promoted" "$expected" 'promoted Gerrit target lost base'
+          elif [ "$mode:$forge" = direct-PR:none ]; then
+            printf -v expected -- '--base %q' "$base"
+            assert_contains "$ship" "$expected" 'ship PR target lost base'
+            assert_contains "$promoted" "$expected" 'promoted PR target lost base'
+          fi
+          if [ "$mode" = no-mistakes ]; then
+            printf -v expected -- '--base-branch %q' "$base"
+            assert_contains "$ship" "$expected" 'ship pipeline target lost base'
+            assert_contains "$promoted" "$expected" 'promoted pipeline target lost base'
+          fi
+        else
+          assert_contains "$ship" 'on a clean default branch.' 'legacy ship setup changed'
+          assert_contains "$scout" 'on a clean default branch.' 'legacy scout setup changed'
+          assert_contains "$promoted" 'Return to a clean default-branch base' 'legacy promotion changed'
+          assert_not_contains "$ship" '--base ' 'unregistered PR base added'
+          assert_not_contains "$promoted" '--base-branch ' 'unregistered pipeline base added'
+          if [ "$forge" = gerrit ]; then
+            assert_contains "$ship" 'adding `--branch <b>` only when' 'legacy Gerrit target changed'
+          fi
+        fi
+      done
+    done
+  done
+  pass 'registered bases survive generated setup, promotion, and delivery contracts'
+}
+
+test_registered_base_reaches_worker_instructions
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
