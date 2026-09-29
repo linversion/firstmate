@@ -61,8 +61,8 @@
 # lets a worker submit, vote on, or abandon a change.
 # Push-only uses the rendered publication contract below. Its ready gate checks
 # the named head against the recorded branch on live origin with a ten-second
-# deadline; stale remote-tracking refs and partial output cannot pass. When a
-# base is registered, bin/fm-codeup-change-request.sh also verifies the reported
+# deadline; stale remote-tracking refs and partial output cannot pass.
+# bin/fm-codeup-change-request.sh also verifies the reported
 # Codeup request number and URL with a live read of repository and branch IDs.
 # That API does not prove the request's head commit or CI result.
 # tests/fm-task-delivery.test.sh covers that gate for promoted workers too.
@@ -155,16 +155,16 @@ fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id> [branch] [<
   local mode=$1 id=$2 forge=${4:-none} base=${5:-}
   local branch=${3:-fm/$id}
   fm_forge_valid_for_mode "$forge" "$mode" fm_ship_rule_one || return 1
+  if [ "$forge" = push-only ] && [ -z "$base" ]; then
+    echo 'error: fm_ship_rule_one: forge=push-only requires a registered base branch' >&2
+    return 1
+  fi
   if [ "$forge" = gerrit ]; then
     printf '%s\n' "1. Never push with git and never create a change except through the one \`gerrit-axi publish --squash\` your Definition of done names. Never run \`gerrit-axi submit\`, never vote or review a change by any path, including \`gerrit review\` or a label option on a push, and never abandon one: a human reviewer approves and submits it on the server."
     return 0
   fi
   if [ "$forge" = push-only ]; then
-    if [ -n "$base" ]; then
-      printf '%s\n' "1. Never push to the base branch (push only your \`$branch\` branch). Never merge, review, or close a Codeup merge request."
-    else
-      printf '%s\n' "1. Never push to the base branch (push only your \`$branch\` branch). Never merge or open a pull request; a human handles any merge request on the remote."
-    fi
+    printf '%s\n' "1. Never push to the base branch (push only your \`$branch\` branch). Never merge, review, or close a Codeup merge request."
     return 0
   fi
   case "$mode" in
@@ -378,14 +378,17 @@ fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [base-branch]
     pr_instruction=" Pass \`--base $base_q\` to \`gh-axi pr create\` to target the registered base."
   fi
   fm_forge_valid_for_mode "$forge" "$mode" fm_dod_block || return 1
+  if [ "$forge" = push-only ] && [ -z "$base" ]; then
+    echo 'error: fm_dod_block: forge=push-only requires a registered base branch' >&2
+    return 1
+  fi
   case "$mode:$forge" in
     direct-PR:push-only)
       printf -v refspec_q '%q' "$branch:refs/heads/$branch"
-      if [ -n "$base" ]; then
-        codeup_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-codeup-change-request.sh"
-        printf -v codeup_script_q '%q' "$codeup_script"
-        printf -v branch_q '%q' "$branch"
-        cat <<EOF
+      codeup_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-codeup-change-request.sh"
+      printf -v codeup_script_q '%q' "$codeup_script"
+      printf -v branch_q '%q' "$branch"
+      cat <<EOF
 # Definition of done
 Delivery contract: mode=direct-PR forge=push-only
 Ship branch: $branch
@@ -401,20 +404,6 @@ A human reviews and merges the request in Codeup. Never run \`codeup-merge-chang
 The completion check reads the request on the live repository and confirms its source and target branches. It cannot confirm the request's head commit or CI result because the available API needs a patch-set business ID for CI.
 Do NOT run /no-mistakes.
 EOF
-      else
-      cat <<EOF
-# Definition of done
-Delivery contract: mode=direct-PR forge=push-only
-Ship branch: $branch
-This task publishes its branch to origin with plain git and stops; there is no pull request or forge integration in this delivery.
-The task is complete only when committed on your branch \`$branch\`.
-When implementation is committed, run \`git push origin $refspec_q\` from your worktree and verify origin holds your HEAD at that exact branch.
-Append \`done [at=<epoch>]: branch $branch pushed to origin\` to the status file and stop.
-Do not open a pull request or a merge request.
-A human must open any merge request on the remote, review it, and merge the branch into the registered base branch; firstmate does not do those remote steps.
-Do NOT run /no-mistakes.
-EOF
-      fi
       ;;
     direct-PR:gerrit)
       cat <<EOF
@@ -729,16 +718,15 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
       printf '%s\n' 'registered base branch cannot be read for push-only completion'
       return 1
     }
-    if [ -n "$base" ]; then
-      if [[ "$note" =~ ^Codeup[[:space:]]MR[[:space:]]([0-9]+)[[:space:]](https://[^[:space:]]+)$ ]]; then
-        mr_id=${BASH_REMATCH[1]}
-        mr_url=${BASH_REMATCH[2]}
-      else
-        printf '%s\n' 'Codeup done must report the merge request number and web URL'
-        return 1
-      fi
-    elif [ -z "$branch" ] || [ "$note" != "branch $branch pushed to origin" ]; then
-      printf '%s\n' "push-only done must report the recorded branch pushed to origin"
+    if [ -z "$base" ]; then
+      printf '%s\n' 'registered base branch is required for push-only completion'
+      return 1
+    fi
+    if [[ "$note" =~ ^Codeup[[:space:]]MR[[:space:]]([0-9]+)[[:space:]](https://[^[:space:]]+)$ ]]; then
+      mr_id=${BASH_REMATCH[1]}
+      mr_url=${BASH_REMATCH[2]}
+    else
+      printf '%s\n' 'Codeup done must report the merge request number and web URL'
       return 1
     fi
     remote_sha=$(fm_run_timed 10 git -C "$wt" ls-remote --heads origin "refs/heads/$branch" 2>/dev/null) || remote_sha=
@@ -747,11 +735,9 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
       printf '%s\n' "origin branch $branch does not hold named head $sha"
       return 1
     fi
-    if [ -n "$base" ]; then
-      if ! "$script_dir/fm-codeup-change-request.sh" verify "$wt" "$branch" "$base" "$mr_id" "$mr_url" >/dev/null; then
-        printf '%s\n' "Codeup merge request $mr_id was not verified on the live repository for $branch -> $base"
-        return 1
-      fi
+    if ! "$script_dir/fm-codeup-change-request.sh" verify "$wt" "$branch" "$base" "$mr_id" "$mr_url" >/dev/null; then
+      printf '%s\n' "Codeup merge request $mr_id was not verified on the live repository for $branch -> $base"
+      return 1
     fi
     return 0
   fi

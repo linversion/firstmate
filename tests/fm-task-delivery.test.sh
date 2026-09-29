@@ -1654,7 +1654,7 @@ EOF
 }
 
 test_registered_base_and_push_only_contract() {
-  local home out status brief
+  local home out status brief query rejected
   home="$TMP_ROOT/push-only/home"
   mkdir -p "$home/data"
   printf '%s\n' '- project [base=develop direct-PR branch=contrib/ forge=push-only] - fixture' > "$home/data/projects.md"
@@ -1683,14 +1683,33 @@ test_registered_base_and_push_only_contract() {
   assert_grep 'A human reviews and merges the request in Codeup' "$brief" \
     "Codeup brief did not stop before review and merge"
   assert_no_grep 'gh-axi pr create' "$brief" "push-only brief asked for GitHub PR creation"
-  printf '%s\n' '- project [direct-PR forge=push-only +yolo] - fixture' > "$home/data/projects.md"
+  printf '%s\n' '- project [direct-PR forge=push-only base=develop +yolo] - fixture' > "$home/data/projects.md"
   out=$(FM_HOME="$home" "$PROJECT_MODE" project 2>/dev/null)
   [ "$out" = 'direct-PR off' ] || fail "push-only allowed standing autonomous merge authority"
-  printf '%s\n' '- project [no-mistakes forge=push-only] - fixture' > "$home/data/projects.md"
+  printf '%s\n' '- project [no-mistakes forge=push-only base=develop] - fixture' > "$home/data/projects.md"
   if out=$(FM_HOME="$home" "$PROJECT_MODE" project 2>&1); then
     fail "push-only forge accepted the no-mistakes PR pipeline"
   fi
   assert_contains "$out" 'requires direct-PR mode' "unsupported push-only mode refusal was unclear"
+  for out in default forge base branch; do
+    printf '%s\n' '- project [direct-PR forge=push-only] - fixture' > "$home/data/projects.md"
+    case "$out" in
+      default) query= ;;
+      forge) query=--forge ;;
+      base) query=--base-branch ;;
+      branch) query=--branch-prefix ;;
+    esac
+    if [ -n "$query" ]; then
+      rejected=$(FM_HOME="$home" "$PROJECT_MODE" "$query" project 2>&1) && fail "base-less push-only registration was accepted by $out query"
+    elif rejected=$(FM_HOME="$home" "$PROJECT_MODE" project 2>&1); then
+      fail "base-less push-only registration was accepted by $out query"
+    fi
+    assert_contains "$rejected" 'requires a registered base= branch' "base-less $out refusal was unclear"
+  done
+  if out=$(FM_HOME="$home" "$BRIEF" no-base-task project --mode direct-PR --forge push-only 2>&1); then
+    fail 'base-less push-only ship brief was generated'
+  fi
+  assert_contains "$out" 'requires a registered base= branch' 'base-less brief refusal was unclear'
   printf '%s\n' '- project [direct-PR base=] - fixture' > "$home/data/projects.md"
   if out=$(FM_HOME="$home" "$PROJECT_MODE" --base-branch project 2>&1); then
     fail "empty registered base was accepted"
@@ -1763,6 +1782,15 @@ SH
       _ "$ROOT/bin/fm-dod-lib.sh" "$wt" "$note" "$home/state" "$meta"
   }
   out=$(codeup_gate) || fail "Codeup completion gate rejected live request: $out"
+  printf '%s\n' '- project [direct-PR forge=push-only] - fixture' > "$home/data/projects.md"
+  if out=$(codeup_gate 2>&1); then fail 'base-less Codeup completion was accepted'; fi
+  assert_contains "$out" 'registered base branch cannot be read' 'base-less completion refusal was unclear'
+  printf '%s\n' '- project [direct-PR base=develop forge=push-only] - fixture' > "$home/data/projects.md"
+  git --git-dir="$origin" update-ref -d refs/heads/contrib/codeup-task
+  git -C "$wt" show-ref --verify refs/remotes/origin/contrib/codeup-task >/dev/null || fail 'stale Codeup tracking ref fixture missing'
+  if out=$(codeup_gate 2>&1); then fail 'Codeup completion accepted a deleted remote branch'; fi
+  assert_contains "$out" 'does not hold named head' 'deleted Codeup branch refusal was unclear'
+  git -C "$wt" push -q origin contrib/codeup-task:refs/heads/contrib/codeup-task
   note='done: Codeup MR 8 https://codeup.aliyun.com/org/project/change/8'
   if out=$(codeup_gate 2>&1); then fail 'Codeup completion accepted an invented request number'; fi
   assert_contains "$out" 'was not verified' 'invented Codeup request refusal was unclear'
@@ -1776,58 +1804,6 @@ SH
   pass 'Codeup publication is idempotent and completion requires a live matching request and pushed head'
 }
 
-test_push_only_done_requires_exact_origin_head() {
-  local case_dir wt origin out note meta home
-  case_dir="$TMP_ROOT/push-only-gate"
-  wt="$case_dir/worktree"
-  origin="$case_dir/origin.git"
-  mkdir -p "$case_dir/state"
-  git init -q -b main "$case_dir/seed"
-  git -C "$case_dir/seed" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -q --allow-empty -m base
-  git clone -q --bare "$case_dir/seed" "$origin"
-  git clone -q "$origin" "$wt"
-  git -C "$wt" checkout -q -b contrib/pushed
-  git -C "$wt" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -q --allow-empty -m feature
-  meta="$case_dir/state/pushed.meta"
-  home="$case_dir"
-  mkdir -p "$home/data"
-  printf '%s\n' '- worktree [direct-PR forge=push-only] - fixture' > "$home/data/projects.md"
-  FM_HOME="$home" "$BRIEF" pushed worktree --scout >/dev/null 2>&1 || fail 'scout brief failed'
-  fill_brief_subsections "$home/data/pushed/brief.md" 'Ship this change.' 'Push the selected branch.'
-  printf 'kind=scout\nproject=%s\nworktree=%s\nforge=gerrit\n' "$wt" "$wt" > "$meta"
-  FM_HOME="$home" "$PROMOTE" pushed --mode direct-PR --yolo off --branch-prefix contrib/ >/dev/null 2>&1 \
-    || fail 'push-only promotion failed'
-  [ "$(sed -n 's/^forge=//p' "$meta")" = push-only ] || fail 'promotion did not replace the forge binding'
-  note='done: branch contrib/pushed pushed to origin'
-
-  push_gate() {
-    bash -c '. "$1"; fm_dod_accept_ship_done ship direct-PR "$2" "$2" "$3" "$4" pushed "$5"' \
-      _ "$ROOT/bin/fm-dod-lib.sh" "$wt" "$note" "$case_dir/state" "$meta"
-  }
-  if out=$(push_gate); then
-    fail "push-only done was accepted before the branch reached origin"
-  fi
-  assert_contains "$out" 'does not hold named head' "unpublished branch refusal did not name origin"
-
-  git -C "$wt" push -q origin contrib/pushed:refs/heads/contrib/pushed
-  out=$(push_gate)
-  [ -z "$out" ] || fail "published branch gate emitted a refusal: $out"
-
-  git --git-dir="$origin" update-ref -d refs/heads/contrib/pushed
-  git -C "$wt" show-ref --verify refs/remotes/origin/contrib/pushed >/dev/null || fail 'stale ref fixture missing'
-  if out=$(push_gate); then
-    fail 'promoted task accepted a deleted remote branch through a stale tracking ref'
-  fi
-  git -C "$wt" push -q origin contrib/pushed:refs/heads/contrib/pushed
-
-  git -C "$wt" -c user.name='Firstmate Tests' -c user.email='tests@example.invalid' commit -q --allow-empty -m later
-  if out=$(push_gate); then
-    fail "push-only done accepted a later unpushed commit"
-  fi
-  assert_contains "$out" 'does not hold named head' "later commit refusal did not name the remote mismatch"
-  pass "push-only done is accepted only for the exact ship head on origin"
-}
-
 test_registered_base_reaches_worker_instructions() {
   local home mode forge forge_annotation base annotation id out ship scout promoted replay expected n=0
   home="$TMP_ROOT/instruction-base/home"
@@ -1839,6 +1815,7 @@ test_registered_base_reaches_worker_instructions() {
       for forge in none gerrit push-only; do
         case "$mode:$forge" in
           local-only:gerrit|local-only:push-only|no-mistakes:push-only) continue ;;
+          direct-PR:push-only) [ -n "$base" ] || continue ;;
         esac
         n=$((n + 1))
         id="instruction-base-$n"
@@ -1892,9 +1869,6 @@ test_registered_base_reaches_worker_instructions() {
           if [ "$forge" = gerrit ]; then
             # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
             assert_contains "$ship" 'adding `--branch <b>` only when' 'legacy Gerrit target changed'
-          elif [ "$forge" = push-only ]; then
-            assert_contains "$ship" 'A human must open any merge request' 'legacy push-only brief changed without a base'
-            assert_not_contains "$ship" 'codeup-create-change-request' 'legacy push-only brief opened Codeup request without a base'
           fi
         fi
       done
@@ -1932,7 +1906,7 @@ SH
   chmod +x "$fakebin/git"
   for action in base 'done'; do
     if [ "$action" = 'done' ]; then
-      printf '%s\n' '- project [direct-PR forge=push-only] - fixture' > "$home/data/projects.md"
+      printf '%s\n' '- project [direct-PR forge=push-only base=develop] - fixture' > "$home/data/projects.md"
     fi
     start=$(date +%s)
     status=0
@@ -1942,7 +1916,7 @@ SH
         fm_project_base_branch "$2"
       else
         . "$1/bin/fm-dod-lib.sh"
-        fm_dod_accept_ship_done ship direct-PR "$2" "$2" "done: branch develop pushed to origin" "$FM_HOME/state" task "$FM_HOME/state/task.meta"
+        fm_dod_accept_ship_done ship direct-PR "$2" "$2" "done: Codeup MR 7 https://codeup.aliyun.com/org/project/change/7" "$FM_HOME/state" task "$FM_HOME/state/task.meta"
       fi
     ' _ "$ROOT" "$wt" "$action" 2>&1) || status=$?
     elapsed=$(( $(date +%s) - start ))
@@ -1986,6 +1960,5 @@ test_promotion_carries_the_forge_binding
 test_spawn_and_promote_require_filled_task_subsections
 test_project_mode_resolves_branch_prefix
 test_registered_base_and_push_only_contract
-test_push_only_done_requires_exact_origin_head
 test_codeup_publish_and_live_done_gate
 echo "# all fm-task-delivery tests passed"

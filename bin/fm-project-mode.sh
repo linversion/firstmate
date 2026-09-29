@@ -61,11 +61,10 @@
 #   drives, and `gerrit` means a Gerrit server: no pull requests, so the worker
 #   publishes a change with gerrit-axi instead (bin/fm-dod-lib.sh owns what that
 #   changes for a worker in each publishing mode).
-#   `push-only` means the worker pushes the branch to origin. With no registered
-#   base, it stops and leaves any remote merge request to a human; with a
-#   registered base it uses bin/fm-codeup-change-request.sh to open a Codeup
-#   merge request and leaves review and landing to a human. It requires
-#   direct-PR mode.
+#   `push-only` means the worker pushes the branch to origin and uses
+#   bin/fm-codeup-change-request.sh to open a Codeup merge request against a
+#   required registered base; review and landing remain human actions. It
+#   requires direct-PR mode.
 #   The binding is EXPLICIT because a provider family must never be guessed;
 #   bin/fm-forge-detect.sh proposes it from a protocol fact at project-add
 #   intake, and the captain's confirmation is what this record holds.
@@ -227,6 +226,17 @@ case "$mode" in
   *) echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off; branch=fm/ ;;
 esac
 case "$yolo" in on|off) ;; *) yolo=off ;; esac
+if [ "$forge" = forge=push-only ]; then
+  if [ "$base" = none ]; then
+    echo "refused: forge=push-only for $NAME requires a registered base= branch in $REG" >&2
+    exit 3
+  fi
+  push_base=${base#base=}
+  if [ -z "$push_base" ] || ! git check-ref-format --branch "$push_base" >/dev/null 2>&1; then
+    echo "refused: invalid base branch '$push_base' registered for forge=push-only project $NAME in $REG" >&2
+    exit 3
+  fi
+fi
 if [ "$BASE_QUERY" -eq 1 ]; then
   case "$base" in
     none) echo ;;
