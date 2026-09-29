@@ -1757,7 +1757,7 @@ case "$command" in
     : > "$FM_TEST_CODEUP_CREATED"
     printf '{"localId":7}\n' ;;
   codeup-get-change-request)
-    printf '{"localId":7,"projectId":42,"sourceProjectId":42,"targetProjectId":42,"sourceBranch":"contrib/codeup-task","targetBranch":"%s","status":"UNDER_REVIEW","webUrl":"https://codeup.aliyun.com/org/project/change/7"}\n' "${FM_TEST_CODEUP_TARGET:-develop}" ;;
+    printf '{"localId":7,"projectId":42,"sourceProjectId":42,"targetProjectId":42,"sourceBranch":"contrib/codeup-task","targetBranch":"%s","status":"%s","webUrl":"https://codeup.aliyun.com/org/project/change/7"}\n' "${FM_TEST_CODEUP_TARGET:-develop}" "${FM_TEST_CODEUP_STATUS:-UNDER_REVIEW}" ;;
   *) exit 2 ;;
 esac
 SH
@@ -1781,6 +1781,8 @@ SH
       bash -c '. "$1"; fm_dod_accept_ship_done ship direct-PR "$2" "$2" "$3" "$4" codeup-task "$5"' \
       _ "$ROOT/bin/fm-dod-lib.sh" "$wt" "$note" "$home/state" "$meta"
   }
+  if out=$(FM_TEST_CODEUP_STATUS=MERGED codeup_gate 2>&1); then fail 'merged Codeup request passed before first acceptance'; fi
+  [ ! -e "$home/state/codeup-task.codeup-accepted" ] || fail 'unaccepted Codeup request wrote an acceptance receipt'
   out=$(codeup_gate) || fail "Codeup completion gate rejected live request: $out"
   printf '%s\n' '- project [direct-PR forge=push-only] - fixture' > "$home/data/projects.md"
   if out=$(codeup_gate 2>&1); then fail 'base-less Codeup completion was accepted'; fi
@@ -1797,8 +1799,15 @@ SH
   note='done: Codeup MR 7 https://codeup.aliyun.com/org/project/change/7'
   if out=$(FM_TEST_CODEUP_TARGET=master codeup_gate 2>&1); then fail 'Codeup completion accepted the wrong target branch'; fi
   assert_contains "$out" 'was not verified' 'wrong Codeup target refusal was unclear'
+  git --git-dir="$origin" update-ref -d refs/heads/contrib/codeup-task
+  out=$(FM_TEST_CODEUP_STATUS=MERGED codeup_gate) || fail "merged Codeup completion was lost after source branch deletion: $out"
+  if out=$(FM_TEST_CODEUP_STATUS=CLOSED codeup_gate 2>&1); then fail 'closed Codeup request was accepted as merged'; fi
+  if out=$(FM_TEST_CODEUP_STATUS=MERGED FM_TEST_CODEUP_TARGET=master codeup_gate 2>&1); then fail 'merged Codeup request on another base was accepted'; fi
+  note='done: Codeup MR 8 https://codeup.aliyun.com/org/project/change/8'
+  if out=$(FM_TEST_CODEUP_STATUS=MERGED codeup_gate 2>&1); then fail 'different merged Codeup request reused an acceptance receipt'; fi
+  note='done: Codeup MR 7 https://codeup.aliyun.com/org/project/change/7'
   git -C "$wt" -c user.name=test -c user.email=test@example.invalid commit -qm later --allow-empty
-  if out=$(codeup_gate 2>&1); then fail 'Codeup completion accepted an unpushed later commit'; fi
+  if out=$(FM_TEST_CODEUP_STATUS=MERGED codeup_gate 2>&1); then fail 'Codeup completion accepted an unpushed later commit'; fi
   assert_contains "$out" 'does not hold named head' 'Codeup branch-head refusal was unclear'
   unset FM_TEST_CODEUP_LOG FM_TEST_CODEUP_CREATED
   pass 'Codeup publication is idempotent and completion requires a live matching request and pushed head'

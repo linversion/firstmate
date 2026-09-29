@@ -2,6 +2,7 @@
 # Publish or verify one Codeup merge request for a registered-base push-only ship.
 # Usage: fm-codeup-change-request.sh publish <worktree> <ship-branch> <base-branch>
 #        fm-codeup-change-request.sh verify <worktree> <ship-branch> <base-branch> <local-id> <web-url>
+#        fm-codeup-change-request.sh verify-merged <worktree> <ship-branch> <base-branch> <local-id> <web-url>
 # The CLI commands and response fields follow the central-edition aliyun devops
 # codeup-get-repository, codeup-list-change-requests, codeup-create-change-request,
 # and codeup-get-change-request contracts. A retry lists open requests before
@@ -14,7 +15,7 @@ mode=${1:-}
 wt=${2:-}
 branch=${3:-}
 base=${4:-}
-case "$mode" in publish) [ "$#" -eq 4 ] || die 'usage: publish <worktree> <ship-branch> <base-branch>' ;; verify) [ "$#" -eq 6 ] || die 'usage: verify <worktree> <ship-branch> <base-branch> <local-id> <web-url>' ;; *) die 'usage: publish|verify <worktree> <ship-branch> <base-branch> [<local-id> <web-url>]' ;; esac
+case "$mode" in publish) [ "$#" -eq 4 ] || die 'usage: publish <worktree> <ship-branch> <base-branch>' ;; verify|verify-merged) [ "$#" -eq 6 ] || die 'usage: verify <worktree> <ship-branch> <base-branch> <local-id> <web-url>' ;; *) die 'usage: publish|verify|verify-merged <worktree> <ship-branch> <base-branch> [<local-id> <web-url>]' ;; esac
 if [ ! -d "$wt" ] || ! git -C "$wt" rev-parse --git-dir >/dev/null 2>&1; then
   die "not a git worktree: $wt"
 fi
@@ -46,24 +47,28 @@ repository=$(codeup codeup-get-repository --repository-id "$repo_path") || die '
 repo_id=$(printf '%s' "$repository" | jq -er --arg path "$path" 'select(.pathWithNamespace == $path) | .id | select(type == "number" and . > 0 and . == floor)') \
   || die "Codeup repository response does not identify $path"
 
-read_request() { # <local-id> [expected-web-url]
-  local local_id=$1 expected_url=${2:-} response url
+read_request() { # <local-id> [expected-web-url] [allowed-statuses]
+  local local_id=$1 expected_url=${2:-} allowed=${3:-'["UNDER_DEV","UNDER_REVIEW","TO_BE_MERGED"]'} response url
   response=$(codeup codeup-get-change-request --repository-id "$repo_id" --local-id "$local_id") \
     || die "Codeup merge request $local_id cannot be read"
-  url=$(printf '%s' "$response" | jq -er --argjson repo "$repo_id" --argjson id "$local_id" \
+  url=$(printf '%s' "$response" | jq -er --argjson repo "$repo_id" --argjson id "$local_id" --argjson allowed "$allowed" \
     --arg source "$branch" --arg target "$base" --arg expected "$expected_url" '
     select(.localId == $id and .projectId == $repo and .sourceProjectId == $repo and .targetProjectId == $repo)
     | select(.sourceBranch == $source and .targetBranch == $target)
-    | select((.status // .state) as $state | ["UNDER_DEV", "UNDER_REVIEW", "TO_BE_MERGED"] | index($state) != null)
+    | select((.status // .state) as $state | $allowed | index($state) != null)
     | (.webUrl // .detailUrl) | select(type == "string" and startswith("https://") and ($expected == "" or . == $expected))') \
-    || die "Codeup merge request $local_id does not match repository $repo_id, $branch -> $base, its open state, or the reported URL"
+    || die "Codeup merge request $local_id does not match repository $repo_id, $branch -> $base, its required state, or the reported URL"
   printf 'MR %s %s\n' "$local_id" "$url"
 }
 
-if [ "$mode" = verify ]; then
+if [ "$mode" = verify ] || [ "$mode" = verify-merged ]; then
   case "$5" in ''|*[!0-9]*) die 'merge request number must be a positive integer' ;; esac
   [ "$5" -gt 0 ] || die 'merge request number must be a positive integer'
-  read_request "$5" "$6"
+  if [ "$mode" = verify-merged ]; then
+    read_request "$5" "$6" '["MERGED"]'
+  else
+    read_request "$5" "$6"
+  fi
   exit 0
 fi
 

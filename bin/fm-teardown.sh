@@ -3819,6 +3819,7 @@ else
     exit 1
   fi
 fi
+rm -f -- "$STATE/$ID.codeup-accepted"
 fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then

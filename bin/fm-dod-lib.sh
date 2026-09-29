@@ -690,7 +690,7 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 # pr_head=, and the merge-notified marker; <meta> may be a captured copy
 # (bin/fm-fleet-snapshot.sh), so the marker is read from <state>.
 fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta>]
-  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit forge branch remote_sha note base mr_id mr_url script_dir
+  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit forge branch remote_sha note base mr_id mr_url script_dir receipt marker receipt_tmp
   fm_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0
   forge=$(fm_dod_meta_value "$meta" forge)
   if [ "$forge" != push-only ] \
@@ -729,6 +729,17 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
       printf '%s\n' 'Codeup done must report the merge request number and web URL'
       return 1
     fi
+    if [ -z "$state" ] || [ -z "$id" ] || [ ! -d "$state" ]; then
+      printf '%s\n' 'Codeup acceptance state is unavailable'
+      return 1
+    fi
+    receipt=$(printf '%s\t%s\t%s\t%s\t%s' "$sha" "$branch" "$base" "$mr_id" "$mr_url")
+    marker="$state/$id.codeup-accepted"
+    if [ -f "$marker" ] && [ ! -L "$marker" ] && [ "$(cat "$marker")" = "$receipt" ]; then
+      if "$script_dir/fm-codeup-change-request.sh" verify-merged "$wt" "$branch" "$base" "$mr_id" "$mr_url" >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
     remote_sha=$(fm_run_timed 10 git -C "$wt" ls-remote --heads origin "refs/heads/$branch" 2>/dev/null) || remote_sha=
     remote_sha=$(printf '%s\n' "$remote_sha" | awk -v r="refs/heads/$branch" '$2 == r {print $1}')
     if [ "$remote_sha" != "$sha" ]; then
@@ -737,6 +748,15 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     fi
     if ! "$script_dir/fm-codeup-change-request.sh" verify "$wt" "$branch" "$base" "$mr_id" "$mr_url" >/dev/null; then
       printf '%s\n' "Codeup merge request $mr_id was not verified on the live repository for $branch -> $base"
+      return 1
+    fi
+    receipt_tmp=$(mktemp "$state/.codeup-accepted-$id.XXXXXX") || {
+      printf '%s\n' 'Codeup acceptance could not be recorded'
+      return 1
+    }
+    if ! printf '%s\n' "$receipt" > "$receipt_tmp" || ! chmod 600 "$receipt_tmp" || ! mv -f -- "$receipt_tmp" "$marker"; then
+      rm -f -- "$receipt_tmp"
+      printf '%s\n' 'Codeup acceptance could not be recorded'
       return 1
     fi
     return 0
