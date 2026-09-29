@@ -3129,7 +3129,7 @@ if [ "$KIND" = ship ]; then
     exit 1
   fi
   if [ "$STANDING_FORGE" = push-only ] && [ "$YOLO" = on ]; then
-    echo "error: --yolo on is refused for $ID: forge=push-only leaves merge request creation and landing to a human" >&2
+    echo "error: --yolo on is refused for $ID: forge=push-only leaves remote landing to a human" >&2
     exit 1
   fi
   # The registry holds the captain's standing posture, so dropping below it is

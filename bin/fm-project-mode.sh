@@ -61,9 +61,11 @@
 #   drives, and `gerrit` means a Gerrit server: no pull requests, so the worker
 #   publishes a change with gerrit-axi instead (bin/fm-dod-lib.sh owns what that
 #   changes for a worker in each publishing mode).
-#   `push-only` means the worker pushes the branch to origin and stops, leaving
-#   any remote merge request and landing to a human. It is for a remote without
-#   the GitHub or Gerrit publication path and requires direct-PR mode.
+#   `push-only` means the worker pushes the branch to origin. With no registered
+#   base, it stops and leaves any remote merge request to a human; with a
+#   registered base it uses bin/fm-codeup-change-request.sh to open a Codeup
+#   merge request and leaves review and landing to a human. It requires
+#   direct-PR mode.
 #   The binding is EXPLICIT because a provider family must never be guessed;
 #   bin/fm-forge-detect.sh proposes it from a protocol fact at project-add
 #   intake, and the captain's confirmation is what this record holds.
@@ -269,7 +271,7 @@ if [ "$forge" = gerrit ] && [ "$yolo" = on ]; then
   yolo=off
 fi
 if [ "$forge" = push-only ] && [ "$yolo" = on ]; then
-  echo "refused: +yolo is registered for $NAME but forge=push-only leaves merge request creation and landing to a human, so this reports yolo=off" >&2
+  echo "refused: +yolo is registered for $NAME but forge=push-only leaves remote landing to a human, so this reports yolo=off" >&2
   yolo=off
 fi
 # A conditional policy is not a task mode. Mechanical callers get its most

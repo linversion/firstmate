@@ -59,10 +59,12 @@
 # changes is refused until it can be watched by its membership pinned when its
 # watch is armed, because the merge poll watches one change. No contract here
 # lets a worker submit, vote on, or abandon a change.
-# Push-only uses the rendered branch-published contract below. Its ready gate
-# requires the recorded branch and exact done note, then checks the named head
-# against that exact branch on live origin with a ten-second deadline; stale
-# remote-tracking refs and partial output from a timed-out query cannot pass.
+# Push-only uses the rendered publication contract below. Its ready gate checks
+# the named head against the recorded branch on live origin with a ten-second
+# deadline; stale remote-tracking refs and partial output cannot pass. When a
+# base is registered, bin/fm-codeup-change-request.sh also verifies the reported
+# Codeup request number and URL with a live read of repository and branch IDs.
+# That API does not prove the request's head commit or CI result.
 # tests/fm-task-delivery.test.sh covers that gate for promoted workers too.
 # The two PR-based blocks require a non-draft pull request before the done
 # report, read back from the forge; a lane that deliberately holds a draft
@@ -149,8 +151,8 @@ fm_forge_valid_for_mode() {  # <forge> <mode> <caller>
   return 0
 }
 
-fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id> [branch] [<forge>]
-  local mode=$1 id=$2 forge=${4:-none}
+fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id> [branch] [<forge>] [base-branch]
+  local mode=$1 id=$2 forge=${4:-none} base=${5:-}
   local branch=${3:-fm/$id}
   fm_forge_valid_for_mode "$forge" "$mode" fm_ship_rule_one || return 1
   if [ "$forge" = gerrit ]; then
@@ -158,7 +160,11 @@ fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id> [branch] [<
     return 0
   fi
   if [ "$forge" = push-only ]; then
-    printf '%s\n' "1. Never push to the base branch (push only your \`$branch\` branch). Never merge or open a pull request; a human handles any merge request on the remote."
+    if [ -n "$base" ]; then
+      printf '%s\n' "1. Never push to the base branch (push only your \`$branch\` branch). Never merge, review, or close a Codeup merge request."
+    else
+      printf '%s\n' "1. Never push to the base branch (push only your \`$branch\` branch). Never merge or open a pull request; a human handles any merge request on the remote."
+    fi
     return 0
   fi
   case "$mode" in
@@ -366,7 +372,7 @@ EOF
 
 fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [base-branch]
   local mode=$1 id=$2 forge=${4:-none}
-  local branch=${3:-fm/$id} refspec_q base=${5:-} base_q pr_instruction=''
+  local branch=${3:-fm/$id} refspec_q base=${5:-} base_q branch_q pr_instruction='' codeup_script codeup_script_q
   if [ -n "$base" ]; then
     printf -v base_q '%q' "$base"
     pr_instruction=" Pass \`--base $base_q\` to \`gh-axi pr create\` to target the registered base."
@@ -375,6 +381,27 @@ fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [base-branch]
   case "$mode:$forge" in
     direct-PR:push-only)
       printf -v refspec_q '%q' "$branch:refs/heads/$branch"
+      if [ -n "$base" ]; then
+        codeup_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-codeup-change-request.sh"
+        printf -v codeup_script_q '%q' "$codeup_script"
+        printf -v branch_q '%q' "$branch"
+        cat <<EOF
+# Definition of done
+Delivery contract: mode=direct-PR forge=push-only
+Ship branch: $branch
+This task publishes its branch to origin with plain git and opens one Aliyun Codeup merge request through \`aliyun devops\`.
+The task is complete only when committed on your branch \`$branch\`.
+Run \`git push origin $refspec_q\` from your worktree and verify origin holds your HEAD at that exact branch.
+The Codeup CLI needs \`ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID\` from Yunxiao Organization Management > Basic Information and \`ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN\` from a Yunxiao personal access token with Codeup merge request access.
+Read both from your own environment; if either is missing, stop and report its name, without guessing, creating a token, or printing its value.
+Run \`$codeup_script_q publish . $branch_q $base_q\` from your worktree. It finds the repository ID from origin with \`aliyun devops codeup-get-repository\`, checks open requests with \`aliyun devops codeup-list-change-requests\`, creates one with \`aliyun devops codeup-create-change-request\` only if needed, and reads it back with \`aliyun devops codeup-get-change-request\`.
+If publication is interrupted, rerun the same command; an already open request for this source and target is reported instead of creating another.
+It prints \`MR <number> <web URL>\`. Append \`done [at=<epoch>]: Codeup MR <number> <web URL>\` to the status file using those exact returned values and stop.
+A human reviews and merges the request in Codeup. Never run \`codeup-merge-change-request\`, \`codeup-review-change-request\`, or \`codeup-close-change-request\`.
+The completion check reads the request on the live repository and confirms its source and target branches. It cannot confirm the request's head commit or CI result because the available API needs a patch-set business ID for CI.
+Do NOT run /no-mistakes.
+EOF
+      else
       cat <<EOF
 # Definition of done
 Delivery contract: mode=direct-PR forge=push-only
@@ -387,6 +414,7 @@ Do not open a pull request or a merge request.
 A human must open any merge request on the remote, review it, and merge the branch into the registered base branch; firstmate does not do those remote steps.
 Do NOT run /no-mistakes.
 EOF
+      fi
       ;;
     direct-PR:gerrit)
       cat <<EOF
@@ -673,7 +701,7 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 # pr_head=, and the merge-notified marker; <meta> may be a captured copy
 # (bin/fm-fleet-snapshot.sh), so the marker is read from <state>.
 fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta>]
-  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit forge branch remote_sha note
+  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit forge branch remote_sha note base mr_id mr_url script_dir
   fm_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0
   forge=$(fm_dod_meta_value "$meta" forge)
   if [ "$forge" != push-only ] \
@@ -696,7 +724,20 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
   if [ "$forge" = push-only ]; then
     branch=$(fm_dod_meta_value "$meta" branch)
     note=$(status_line_note "$line")
-    if [ -z "$branch" ] || [ "$note" != "branch $branch pushed to origin" ]; then
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    base=$("$script_dir/fm-project-mode.sh" --base-branch "$(basename "$project")" 2>/dev/null) || {
+      printf '%s\n' 'registered base branch cannot be read for push-only completion'
+      return 1
+    }
+    if [ -n "$base" ]; then
+      if [[ "$note" =~ ^Codeup[[:space:]]MR[[:space:]]([0-9]+)[[:space:]](https://[^[:space:]]+)$ ]]; then
+        mr_id=${BASH_REMATCH[1]}
+        mr_url=${BASH_REMATCH[2]}
+      else
+        printf '%s\n' 'Codeup done must report the merge request number and web URL'
+        return 1
+      fi
+    elif [ -z "$branch" ] || [ "$note" != "branch $branch pushed to origin" ]; then
       printf '%s\n' "push-only done must report the recorded branch pushed to origin"
       return 1
     fi
@@ -705,6 +746,12 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     if [ "$remote_sha" != "$sha" ]; then
       printf '%s\n' "origin branch $branch does not hold named head $sha"
       return 1
+    fi
+    if [ -n "$base" ]; then
+      if ! "$script_dir/fm-codeup-change-request.sh" verify "$wt" "$branch" "$base" "$mr_id" "$mr_url" >/dev/null; then
+        printf '%s\n' "Codeup merge request $mr_id was not verified on the live repository for $branch -> $base"
+        return 1
+      fi
     fi
     return 0
   fi

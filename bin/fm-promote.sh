@@ -127,7 +127,7 @@ refuse_impossible_forge_posture() {
     return 1
   fi
   if [ "$FORGE" = push-only ] && [ "$YOLO" = on ]; then
-    echo "error: --yolo on is refused for forge=push-only: merge request creation and landing remain human actions" >&2
+    echo "error: --yolo on is refused for forge=push-only: remote landing remains a human action" >&2
     return 1
   fi
   return 0
@@ -265,7 +265,7 @@ The mode-specific Definition of done below is the current delivery contract.
 
 # Current ship safety rule
 EOF
-  fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE"
+  fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH"
   if [ -n "$PROMOTION_ASK_USER_BLOCK" ]; then
     printf '\nThe no-mistakes ask-user escalation below supersedes the scout rule 6 escalation shape.\n'
     printf '%s\n' "$PROMOTION_ASK_USER_BLOCK"

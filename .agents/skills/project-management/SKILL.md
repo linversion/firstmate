@@ -55,7 +55,7 @@ Default it off for every project and every posture, and enable it only on the ca
 
 `bin/fm-project-mode.sh`'s header owns the optional `forge=` binding and `bin/fm-dod-lib.sh` owns what it changes for a worker.
 It is orthogonal to the mode and to `+yolo`, so it is never derived from either, and it is never inferred at use time from a remote name, host, port, or push target.
-At add or create intake, run `bin/fm-forge-detect.sh projects/<name>` once the clone exists and propose its answer alongside the posture; for a known non-GitHub, non-Gerrit origin, also propose the plain-push delivery and confirm that no merge request will be opened by Firstmate.
+At add or create intake, run `bin/fm-forge-detect.sh projects/<name>` once the clone exists and propose its answer alongside the posture; for a known non-GitHub, non-Gerrit origin, also propose the plain-push delivery and confirm the Codeup merge request behavior tied to a registered base in `bin/fm-project-mode.sh`'s header.
 For confirmed plain-push delivery, register `direct-PR` with the forge binding owned by `bin/fm-project-mode.sh`.
 The captain's confirmation is what binds the forge, and the registry token is the durable record of that confirmation.
 Never register the binding from detection alone, and never re-derive it later from the clone.
