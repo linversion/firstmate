@@ -685,7 +685,7 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 fm_dod_codeup_merged() {  # <worktree> <project> <line> <state> <id> <meta>
   local wt=$1 project=$2 line=$3 state=$4 id=$5 meta=$6 sha branch base note mr_id mr_url receipt marker script_dir
   [ "$(fm_dod_meta_value "$meta" forge)" = push-only ] || return 1
-  [ "$(status_line_verb "$line")" = done ] || return 1
+  [ "$(status_line_verb "$line")" = 'done' ] || return 1
   [ -n "$state" ] && [ -n "$id" ] && [ -d "$state" ] || return 1
   sha=$(git -C "$wt" rev-parse --verify HEAD 2>/dev/null) || return 1
   branch=$(fm_dod_meta_value "$meta" branch)
