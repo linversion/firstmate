@@ -1757,7 +1757,7 @@ case "$command" in
     : > "$FM_TEST_CODEUP_CREATED"
     printf '{"localId":7}\n' ;;
   codeup-get-change-request)
-    printf '{"localId":7,"projectId":42,"sourceProjectId":42,"targetProjectId":42,"sourceBranch":"contrib/codeup-task","targetBranch":"%s","status":"%s","webUrl":"https://codeup.aliyun.com/org/project/change/7"}\n' "${FM_TEST_CODEUP_TARGET:-develop}" "${FM_TEST_CODEUP_STATUS:-UNDER_REVIEW}" ;;
+    printf '{"localId":7,"projectId":42,"sourceProjectId":42,"targetProjectId":42,"sourceBranch":"contrib/codeup-task","targetBranch":"%s","status":"%s","webUrl":"%s"%s}\n' "${FM_TEST_CODEUP_TARGET:-develop}" "${FM_TEST_CODEUP_STATUS:-UNDER_REVIEW}" "${FM_TEST_CODEUP_WEB_URL:-https://codeup.aliyun.com/org/project}" "${FM_TEST_CODEUP_DETAIL_FIELD-,\"detailUrl\":\"https://codeup.aliyun.com/org/project/change/7\"}" ;;
   *) exit 2 ;;
 esac
 SH
@@ -1795,6 +1795,10 @@ SH
   git -C "$wt" remote set-url origin 'git@codeup.aliyun.com:org/project.git'
   out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
     "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop) || fail 'Codeup publication retry failed'
+  out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    FM_TEST_CODEUP_DETAIL_FIELD='' FM_TEST_CODEUP_WEB_URL=https://codeup.aliyun.com/org/project/change/7 \
+    "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop) || fail 'Codeup publication without detailUrl failed'
+  [ "$out" = 'MR 7 https://codeup.aliyun.com/org/project/change/7' ] || fail "Codeup publication did not fall back to webUrl: $out"
   count=$(rg -c '^codeup-create-change-request ' "$FM_TEST_CODEUP_LOG")
   [ "$count" -eq 1 ] || fail "Codeup publication opened $count requests on retry"
   note='done: Codeup MR 7 https://codeup.aliyun.com/org/project/change/7'

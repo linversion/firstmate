@@ -64,7 +64,7 @@ read_request() { # <local-id> [expected-web-url] [allowed-statuses]
     select(.localId == $id and .projectId == $repo and .sourceProjectId == $repo and .targetProjectId == $repo)
     | select(.sourceBranch == $source and .targetBranch == $target)
     | select((.status // .state) as $state | $allowed | index($state) != null)
-    | (.webUrl // .detailUrl) | select(type == "string" and startswith("https://") and ($expected == "" or . == $expected))') \
+    | (.detailUrl // .webUrl) | select(type == "string" and startswith("https://") and ($expected == "" or . == $expected))') \
     || die "Codeup merge request $local_id does not match repository $repo_id, $branch -> $base, its required state, or the reported URL"
   printf 'MR %s %s\n' "$local_id" "$url"
 }
