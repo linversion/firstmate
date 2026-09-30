@@ -5,6 +5,8 @@
 # ambient configuration disabled, and one exact ShellCheck version. CI selects
 # canonical partitions; no-mistakes invokes the context-selected default, so
 # both use this owner without duplicating lint configuration.
+# If PATH has no ShellCheck, an executable .tools/bin/shellcheck under this
+# checkout adds .tools/bin to PATH; the same exact-version check still applies.
 # The explicit --fast mode is local-only and disables ShellCheck's extended
 # dataflow analysis while preserving ordinary shell lint checks and source
 # following. CI, main, and merge-base-less runs keep --norc --external-sources
@@ -824,6 +826,10 @@ if [ "$LIST_FILES" -eq 1 ]; then
   exit 0
 fi
 
+# A gate worktree may keep pinned tools locally without adding them to PATH.
+if ! command -v shellcheck >/dev/null 2>&1 && [ -x "$ROOT/.tools/bin/shellcheck" ]; then
+  export PATH="$PATH:$ROOT/.tools/bin"
+fi
 if ! command -v shellcheck >/dev/null 2>&1; then
   printf 'fm-lint.sh: ShellCheck not found; install ShellCheck %s with bin/fm-install-shellcheck.sh <destination-directory> and put that directory on PATH.\n' \
     "$REQUIRED_SHELLCHECK" >&2

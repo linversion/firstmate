@@ -216,6 +216,38 @@ test_corrupt_recorded_branch_is_refused() {
   pass "fm-review-diff refuses a corrupt recorded ship branch instead of reviewing the wrong content"
 }
 
+test_registered_base_controls_review_diff() {
+  local case_dir out status
+  case_dir=$(make_case registered-base)
+  mkdir -p "$case_dir/data"
+  printf '%s\n' '- project [direct-PR base=develop] - fixture' > "$case_dir/data/projects.md"
+  git -C "$case_dir/project" checkout -q -b develop main
+  printf 'develop-only\n' > "$case_dir/project/integration.txt"
+  git -C "$case_dir/project" add integration.txt
+  git -C "$case_dir/project" commit -qm develop-base
+  git -C "$case_dir/project" push -q origin develop
+  git -C "$case_dir/project" checkout -q main
+  git -C "$case_dir/wt" rebase -q develop
+  printf 'ship-work\n' > "$case_dir/wt/ship.txt"
+  git -C "$case_dir/wt" add ship.txt
+  git -C "$case_dir/wt" commit -qm ship-work
+  write_task_meta "$case_dir" "branch=fm/task-x1"
+
+  out=$(FM_HOME="$case_dir" run_review_diff "$case_dir" task-x1)
+  assert_not_contains "$out" 'integration.txt' "review diff included develop-only content from the wrong base"
+  assert_contains "$out" '+ship-work' "review diff omitted ship work"
+
+  printf '%s\n' '- project [direct-PR base=missing-develop] - fixture' > "$case_dir/data/projects.md"
+  set +e
+  out=$(FM_HOME="$case_dir" run_review_diff "$case_dir" task-x1 2>&1)
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail "review diff accepted a base missing on origin"
+  assert_contains "$out" "registered base branch 'missing-develop'" \
+    "review diff refusal did not name the missing base"
+  pass "review diff compares with the registered base and refuses a missing one"
+}
+
 test_pr_meta_uses_pr_head_not_stale_local
 test_pr_meta_fetches_pull_head_without_recorded_sha
 test_stale_recorded_pr_head_loses_to_fetched_pull_head
@@ -223,3 +255,4 @@ test_no_pr_meta_uses_local_branch
 test_unreachable_pr_head_falls_back_with_warning
 test_recorded_branch_beats_moved_worktree_head
 test_corrupt_recorded_branch_is_refused
+test_registered_base_controls_review_diff

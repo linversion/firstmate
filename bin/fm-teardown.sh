@@ -5,6 +5,7 @@
 # scout tasks before reporting success (a secondmate teardown transitions none,
 # since secondmates are not backlog items), then refresh/prune the project's
 # clone for PR-based ship tasks.
+# Base selection follows bin/fm-project-base-lib.sh.
 # An endpoint whose close could not do its job REFUSES before any record naming
 # it is removed: those records are the only thing that names what survived, so
 # reporting such a close as a completed cleanup strands the endpoint instead of
@@ -44,13 +45,13 @@
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
 # hard-resets/removes the worktree and kills its processes. Work has landed when it is
 # reachable from any remote-tracking branch (a fork counts as a remote, so
-# upstream-contribution PRs pushed to a fork satisfy this in any mode), OR - for a
+# upstream-contribution PRs pushed to a fork satisfy this outside push-only), OR - for a
 # normal ship task whose commits are not so reachable - when its PR is merged and
 # GitHub reports a PR head that contains the current local work, or its content is
-# already present in the up-to-date default branch. This recognizes the common
+# already present in the up-to-date base branch. This recognizes the common
 # squash-merge-then-delete-branch flow, where the branch's own commits live nowhere
-# on a remote yet the change is fully in main.
-# Squash merges collapse the branch's commits, so per-commit patch ids against main
+# on a remote yet the change is fully in the base branch.
+# Squash merges collapse the branch's commits, so per-commit patch ids against the base
 # no longer match, and a pipeline rebase can leave the local worktree diverged from
 # the PR head. A diverged copy is not treated as landed: path-set coverage, git
 # cherry, and merge-tree containment each fail to prove content landed without also
@@ -65,8 +66,11 @@
 # by itself causes a false refusal of landed work.
 # A gh lookup error falls back to the content check; if that is also inconclusive,
 # teardown refuses rather than risk discarding unlanded work.
+# Push-only ships instead require the accepted receipt and live merged-request
+# proof owned by fm_dod_codeup_merged in bin/fm-dod-lib.sh, or content already in
+# the refreshed base. Remote-tracking reachability alone cannot permit cleanup.
 # Uncommitted changes are never landed.
-# local-only projects additionally accept work merged into the local default
+# local-only projects additionally accept work merged into the local base
 # branch (firstmate performs that merge after configured approval) as a fallback
 # for the common case where there is no remote at all.
 # Scout tasks (kind=scout in meta) carve out of that check: their worktree is
@@ -324,6 +328,7 @@ for _teardown_source in \
   fm-control-lib.sh \
   fm-lock-lib.sh \
   fm-classify-lib.sh \
+  fm-dod-lib.sh \
   fm-gate-refuse-lib.sh \
   fm-pr-lib.sh \
   fm-public-followup-lib.sh \
@@ -357,6 +362,8 @@ unset _teardown_source
 . "$SCRIPT_DIR/fm-lock-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$SCRIPT_DIR/fm-classify-lib.sh"
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
@@ -1327,20 +1334,11 @@ elif [ "$FORCE" != "--force" ] && fm_pf_relay_active "$FM_HOME"; then
   PUBLIC_FOLLOWUP_RELAY_ACTIVE=1
 fi
 
+# shellcheck source=bin/fm-project-base-lib.sh
+. "$SCRIPT_DIR/fm-project-base-lib.sh"
+
 default_branch() {
-  local ref branch
-  ref=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
-  if [ -n "$ref" ]; then
-    echo "${ref#origin/}"
-    return 0
-  fi
-  for branch in main master; do
-    if git -C "$PROJ" show-ref --verify --quiet "refs/heads/$branch"; then
-      echo "$branch"
-      return 0
-    fi
-  done
-  return 1
+  fm_project_base_branch "$PROJ"
 }
 
 meta_value() {
@@ -1562,11 +1560,11 @@ pr_is_merged() {
   return 0
 }
 
-# Is the branch's content already present in the up-to-date default branch? Fetches
-# first, then 3-way merges the default branch with HEAD: when HEAD introduces nothing
-# the default branch does not already contain (e.g. its change landed via squash) the
-# merged tree equals the default branch's tree. This isolates branch-only changes, so
-# unrelated commits the default branch gained past the merge-base do not count as
+# Is the branch's content already present in the up-to-date base branch? Fetches
+# first, then 3-way merges the base branch with HEAD: when HEAD introduces nothing
+# the base branch does not already contain (e.g. its change landed via squash) the
+# merged tree equals the base branch's tree. This isolates branch-only changes, so
+# unrelated commits the base branch gained past the merge-base do not count as
 # "added". Returns non-zero when inconclusive (no default ref, or a merge conflict),
 # so the caller refuses rather than guesses.
 content_in_default() {
@@ -1589,12 +1587,17 @@ content_in_default() {
 
 # Has the worktree's committed work actually LANDED, though its commits are not
 # reachable from any remote-tracking branch? True when a merged PR proves the
-# current local work is contained in the PR head, OR the content is already in the
-# default branch (fallback, which also covers the no-PR and gh-error paths). False
+# current local work is contained in the PR head (the Codeup receipt check applies
+# instead for push-only), OR the content is already in the
+# base branch (fallback, which also covers the no-PR and gh-error paths). False
 # only for genuinely unlanded work.
 work_is_landed() {
   local branch=$1
-  pr_is_merged "$branch" && return 0
+  if [ "$(fm_meta_get "$META" forge)" = push-only ]; then
+    fm_dod_codeup_merged "$WT" "$PROJ" "$(status_current_line "$STATE/$ID.status" ship)" "$STATE" "$ID" "$META" && return 0
+  else
+    pr_is_merged "$branch" && return 0
+  fi
   content_in_default
 }
 
@@ -1912,6 +1915,18 @@ validate_worktree_teardown_safety() {
     echo "uncommitted changes present" >&2
     echo "Commit them (or get the captain's explicit OK to discard, then --force)." >&2
     return 1
+  elif [ "$(meta_value "$META" forge)" = push-only ]; then
+    branch=${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}
+    if [ -z "$branch" ]; then
+      branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
+      TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=$branch
+    fi
+    if ! work_is_landed "$branch"; then
+      echo "REFUSED: worktree $WT has work not on any remote and not landed." >&2
+      [ -z "$unpushed" ] || printf 'unpushed commits:\n%s\n' "$unpushed" >&2
+      echo "Push the branch, land its Codeup merge request, or get the captain's explicit OK to discard, then --force." >&2
+      return 1
+    fi
   elif [ -n "$unpushed" ]; then
     branch=${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}
     if [ -z "$branch" ]; then
@@ -3827,6 +3842,7 @@ else
     exit 1
   fi
 fi
+rm -f -- "$STATE/$ID.codeup-accepted"
 fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
 if [ "$KIND" != scout ] && [ "$KIND" != secondmate ] && [ "$MODE" != local-only ]; then

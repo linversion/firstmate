@@ -244,12 +244,13 @@
 #   not marked.
 #   Only after this isolation check, every fresh ship or scout requires a clean
 #   task worktree. When an origin configuration is detected, spawn fetches it,
-#   resolves the current remote default branch, and resets to its tip. When none
-#   is detected, spawn skips that remote freshness check and launches from the
-#   clean worktree's current HEAD. Relaunch reuses the recorded worktree without
-#   fetching or resetting its base. An unreachable detected origin, unresolved
-#   default branch, or non-clean worktree refuses a fresh spawn rather than
-#   risking a PR based on stale history or discarding local work.
+#   resolves the base via fm-project-base-lib.sh, and resets to its origin tip.
+#   With no origin and no registered base, spawn skips that remote freshness
+#   check and launches from the clean worktree's current HEAD. Relaunch reuses
+#   the recorded worktree without fetching or resetting its base. An unreachable
+#   detected origin, unresolved base branch, registered base without origin, or
+#   non-clean worktree refuses a fresh spawn rather than risking stale history
+#   or discarding local work.
 #   A slot whose only deviation is a stale submodule gitlink is refused by that
 #   same clean check, but is reported as a stale checkout naming each submodule
 #   and both pins; nothing is converged or removed, and no remedy is suggested.
@@ -596,6 +597,8 @@ if [ -e "$STATE" ] || [ -L "$STATE" ]; then
 fi
 # shellcheck source=bin/fm-ff-lib.sh
 . "$SCRIPT_DIR/fm-ff-lib.sh"
+# shellcheck source=bin/fm-project-base-lib.sh
+. "$SCRIPT_DIR/fm-project-base-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
@@ -3127,6 +3130,10 @@ if [ "$KIND" = ship ]; then
     echo "error: --yolo on is refused for $ID: $PROJ_NAME is registered forge=gerrit, where yolo is inactive because a Code-Review+2 is a positive attributed claim that a named human approved and firstmate must not manufacture one (captain's decision 2026-09-15); spawn with --yolo off" >&2
     exit 1
   fi
+  if [ "$STANDING_FORGE" = push-only ] && [ "$YOLO" = on ]; then
+    echo "error: --yolo on is refused for $ID: forge=push-only leaves remote landing to a human" >&2
+    exit 1
+  fi
   # The registry holds the captain's standing posture, so dropping below it is
   # allowed (a current explicit captain instruction wins) but never silent. An
   # unregistered project resolves to the same no-mistakes standing default, which
@@ -3324,18 +3331,24 @@ freshen_spawn_worktree_base() { # <worktree>
     fi
     return 1
   fi
+  local registered_base
+  registered_base=$("$FM_ROOT/bin/fm-project-mode.sh" --base-branch "$(basename "$PROJ_ABS")") || return 1
   if ! spawn_worktree_has_origin_config "$worktree"; then
+    if [ -n "$registered_base" ]; then
+      echo "error: registered base branch '$registered_base' requires an origin remote for pooled worktree '$worktree'" >&2
+      return 1
+    fi
     return 0
   fi
   if ! git -C "$worktree" fetch --quiet origin; then
     echo "error: could not fetch origin for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
     return 1
   fi
-  if ! git -C "$worktree" remote set-head origin --auto >/dev/null 2>&1; then
+  if [ -z "$registered_base" ] && ! git -C "$worktree" remote set-head origin --auto >/dev/null 2>&1; then
     echo "error: could not resolve origin's current default branch for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
     return 1
   fi
-  default=$(default_branch "$worktree") || {
+  default=$(fm_project_base_branch "$worktree" "$(basename "$PROJ_ABS")") || {
     echo "error: could not determine origin's default branch for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
     return 1
   }
@@ -4859,7 +4872,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode forge yolo branch tasktmp model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -4873,6 +4886,7 @@ preserve_relaunch_meta() {
   echo "harness=$HARNESS"
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"
+  [ -z "${STANDING_FORGE:-}" ] || [ "$STANDING_FORGE" = none ] || echo "forge=$STANDING_FORGE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
   [ -z "${BRANCH:-}" ] || echo "branch=$BRANCH"
   echo "tasktmp=$TASK_TMP"

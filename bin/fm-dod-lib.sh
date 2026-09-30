@@ -6,7 +6,7 @@
 # receives. Both paths must hand the worker the same contract: a promoted
 # no-mistakes worker that never received the ask-user escalation rule or the
 # `--yes` ban is the exact delivery hole this single owner exists to close.
-# fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> [branch] [<forge>]
+# fm_dod_block <no-mistakes|direct-PR|local-only> <task-id> [branch] [<forge>] [base-branch]
 # prints the block on stdout with no trailing blank line. The caller validates the
 # mode; an unknown mode is refused rather than silently rendered as the pipeline
 # contract.
@@ -43,11 +43,11 @@
 # appends " forge=gerrit shape=squash" to that line. The "Ship branch: <branch>"
 # line under it is machine-readable the same way: bin/fm-spawn.sh refuses a ship
 # whose spawn-selected branch disagrees with it.
-# forge is none|gerrit and defaults to none; bin/fm-project-mode.sh's header owns
+# forge is none|gerrit|push-only and defaults to none; bin/fm-project-mode.sh's header owns
 # what the registry binding means, and this file owns what gerrit changes for a
-# WORKER (docs/gerrit-forge-integration.md is the design). A forge composes with
-# the two modes that publish and is refused on local-only, which publishes
-# nothing. On gerrit the worker publishes one squashed change with
+# WORKER (docs/gerrit-forge-integration.md is the design). Gerrit composes with
+# the two modes that publish; push-only applies to direct-PR, and neither binds
+# local-only. On gerrit the worker publishes one squashed change with
 # `gerrit-axi publish --squash` instead of opening a pull request: direct-PR does
 # that straight away, and no-mistakes first runs the pipeline with its three
 # forge-facing steps skipped and recovers the pipeline's own fix commits into its
@@ -59,6 +59,17 @@
 # changes is refused until it can be watched by its membership pinned when its
 # watch is armed, because the merge poll watches one change. No contract here
 # lets a worker submit, vote on, or abandon a change.
+# Push-only uses the rendered publication contract below. Its ready gate checks
+# the named head against the recorded branch on live origin with a ten-second
+# deadline; stale remote-tracking refs and partial output cannot pass.
+# bin/fm-codeup-change-request.sh also verifies the reported
+# Codeup request number and URL with a live read of repository and branch IDs.
+# An accepted head, branch, base, request number, and URL are recorded together;
+# that same receipt plus a live MERGED read preserves completion after landing,
+# even if the source branch is deleted. Changed receipt fields require fresh
+# acceptance through the live-origin and open-request checks.
+# That API does not prove the request's head commit or CI result.
+# tests/fm-task-delivery.test.sh covers that gate for promoted workers too.
 # The two PR-based blocks require a non-draft pull request before the done
 # report, read back from the forge; a lane that deliberately holds a draft
 # declares a paused wait instead. bin/fm-pr-check.sh refuses to arm merge
@@ -128,24 +139,36 @@ EOF
 fm_forge_valid_for_mode() {  # <forge> <mode> <caller>
   local forge=$1 mode=$2 caller=$3
   case "$forge" in
-    none|gerrit) ;;
+    none|gerrit|push-only) ;;
     *)
-      echo "error: $caller: unknown forge '$forge' (expected none or gerrit)" >&2
+      echo "error: $caller: unknown forge '$forge' (expected none, gerrit, or push-only)" >&2
       return 1 ;;
   esac
   if [ "$forge" != none ] && [ "$mode" = local-only ]; then
     echo "error: $caller: forge=$forge cannot ship mode=local-only - that mode publishes nothing, so a forge has no meaning there, and its landing would fast-forward local main with content the review server has never seen; ship no-mistakes or direct-PR, which publish through the forge" >&2
     return 1
   fi
+  if [ "$forge" = push-only ] && [ "$mode" != direct-PR ]; then
+    echo "error: $caller: forge=push-only requires mode=direct-PR" >&2
+    return 1
+  fi
   return 0
 }
 
-fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id> [branch] [<forge>]
-  local mode=$1 id=$2 forge=${4:-none}
+fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id> [branch] [<forge>] [base-branch]
+  local mode=$1 id=$2 forge=${4:-none} base=${5:-}
   local branch=${3:-fm/$id}
   fm_forge_valid_for_mode "$forge" "$mode" fm_ship_rule_one || return 1
+  if [ "$forge" = push-only ] && [ -z "$base" ]; then
+    echo 'error: fm_ship_rule_one: forge=push-only requires a registered base branch' >&2
+    return 1
+  fi
   if [ "$forge" = gerrit ]; then
     printf '%s\n' "1. Never push with git and never create a change except through the one \`gerrit-axi publish --squash\` your Definition of done names. Never run \`gerrit-axi submit\`, never vote or review a change by any path, including \`gerrit review\` or a label option on a push, and never abandon one: a human reviewer approves and submits it on the server."
+    return 0
+  fi
+  if [ "$forge" = push-only ]; then
+    printf '%s\n' "1. Never push to the base branch (push only your \`$branch\` branch). Never merge, review, or close a Codeup merge request."
     return 0
   fi
   case "$mode" in
@@ -153,7 +176,7 @@ fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id> [branch] [<
       printf '%s\n' "1. Never push to the default branch (push only your \`$branch\` branch). Never merge a PR."
       ;;
     local-only)
-      printf '%s\n' "1. Never push to any remote and never open a PR. Work only on your \`$branch\` branch; firstmate handles the merge into local \`main\`."
+      printf '%s\n' "1. Never push to any remote and never open a PR. Work only on your \`$branch\` branch; firstmate handles the merge into the project's local base branch."
       ;;
     no-mistakes)
       printf '%s\n' '1. Never push to the default branch. Never merge a PR.'
@@ -279,7 +302,13 @@ EOF
 # the pipeline, what `--intent` may carry, and the two firstmate-specific rules.
 # Written once; only the two sentences about a green PR depend on the forge,
 # because on gerrit the ci step is skipped and there is no PR to report.
-fm_nm_driving_block() {  # <forge>
+fm_nm_driving_block() {  # <forge> [base-branch]
+  local base=${2:-} base_q base_instruction=
+  if [ -n "$base" ]; then
+    printf -v base_q '%q' "$base"
+    base_instruction="When starting this task's run, pass \`--base-branch $base_q\` to \`no-mistakes axi run\` so validation and delivery target the registered base.
+"
+  fi
   local pr_return_line='' pr_reattach_clause=';'
   if [ "$1" != gerrit ]; then
     pr_return_line="Only a drive call's return reports the green PR: \`no-mistakes axi status\` shows progress but never reports \`checks-passed\` while the ci step is still monitoring the PR for merge, so never wait on a status poll for the next gate or outcome.
@@ -289,7 +318,7 @@ fm_nm_driving_block() {  # <forge>
   cat <<EOF
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
-When starting no-mistakes, pass \`--intent\` as only this brief's \`## Captain's intent\` subsection body, not its heading, plus any later words the captain actually said.
+${base_instruction}When starting no-mistakes, pass \`--intent\` as only this brief's \`## Captain's intent\` subsection body, not its heading, plus any later words the captain actually said.
 Preserve the actual words without adding speaker labels or direct address; the subsection heading supplies provenance outside the pipeline input.
 For a legacy brief with no such subsection, include only words on lines marked \`[captain] \`, excluding that metadata prefix; never copy its mixed \`# Task\` wholesale.
 If it has no provenance-marked captain words, stop and ask firstmate instead of starting no-mistakes.
@@ -321,10 +350,17 @@ EOF
 # once. gerrit-axi owns the squash mechanics; this names the one call and what
 # to read back from it.
 fm_gerrit_publish_block() {
+  local base=${1:-} base_q publish_instruction
+  # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
+  publish_instruction='Run `gerrit-axi publish --squash --json`, adding `--branch <b>` only when the task names a target branch other than the server'\''s default.'
+  if [ -n "$base" ]; then
+    printf -v base_q '%q' "$base"
+    publish_instruction="Run \`gerrit-axi publish --squash --json --branch $base_q\`."
+  fi
   cat <<EOF
 Publish from this copy with \`gerrit-axi\`, never with \`git push\`:
 1. Run \`git fetch origin\` so the server's branch tip is in this repository; \`gerrit-axi\` reads its base off the server and refuses when that tip is not here.
-2. Run \`gerrit-axi publish --squash --json\`, adding \`--branch <b>\` only when the task names a target branch other than the server's default.
+2. $publish_instruction
    It is one push to \`refs/for/<branch>\` that turns every commit since your branch left the server's branch into ONE change carrying the oldest commit's message, so that message is the review description: make it the one you want reviewed.
    It keeps any \`Change-Id\` a commit already carries and stamps one into the oldest commit when it has none, rewriting your local branch's messages only.
    Never edit, remove, or regenerate a \`Change-Id\`: a different one creates a different change and orphans the first one's review, while the same one adds a patch set to it.
@@ -338,11 +374,41 @@ There is no pull request, no \`gh-axi\` call, and no forge CI result to report: 
 EOF
 }
 
-fm_dod_block() {  # <mode> <task-id> [branch] [<forge>]
+fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [base-branch]
   local mode=$1 id=$2 forge=${4:-none}
-  local branch=${3:-fm/$id}
+  local branch=${3:-fm/$id} refspec_q base=${5:-} base_q branch_q pr_instruction='' codeup_script codeup_script_q
+  if [ -n "$base" ]; then
+    printf -v base_q '%q' "$base"
+    pr_instruction=" Pass \`--base $base_q\` to \`gh-axi pr create\` to target the registered base."
+  fi
   fm_forge_valid_for_mode "$forge" "$mode" fm_dod_block || return 1
+  if [ "$forge" = push-only ] && [ -z "$base" ]; then
+    echo 'error: fm_dod_block: forge=push-only requires a registered base branch' >&2
+    return 1
+  fi
   case "$mode:$forge" in
+    direct-PR:push-only)
+      printf -v refspec_q '%q' "$branch:refs/heads/$branch"
+      codeup_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-codeup-change-request.sh"
+      printf -v codeup_script_q '%q' "$codeup_script"
+      printf -v branch_q '%q' "$branch"
+      cat <<EOF
+# Definition of done
+Delivery contract: mode=direct-PR forge=push-only
+Ship branch: $branch
+This task publishes its branch to origin with plain git and opens one Aliyun Codeup merge request through \`aliyun devops\`.
+The task is complete only when committed on your branch \`$branch\`.
+Run \`git push origin $refspec_q\` from your worktree and verify origin holds your HEAD at that exact branch.
+The Codeup CLI needs \`ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID\` from Yunxiao Organization Management > Basic Information and \`ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN\` from a Yunxiao personal access token with Codeup merge request access.
+Read both from your own environment; if either is missing, stop and report its name, without guessing, creating a token, or printing its value.
+Run \`$codeup_script_q publish . $branch_q $base_q\` from your worktree. It finds the repository ID from origin with \`aliyun devops codeup-get-repository\`, checks open requests with \`aliyun devops codeup-list-change-requests\`, creates one with \`aliyun devops codeup-create-change-request\` only if needed, and reads it back with \`aliyun devops codeup-get-change-request\`.
+If publication is interrupted, rerun the same command; an already open request for this source and target is reported instead of creating another.
+It prints \`MR <number> <web URL>\`. Append \`done [at=<epoch>]: Codeup MR <number> <web URL>\` to the status file using those exact returned values and stop.
+A human reviews and merges the request in Codeup. Never run \`codeup-merge-change-request\`, \`codeup-review-change-request\`, or \`codeup-close-change-request\`.
+The completion check reads the request on the live repository and confirms its source and target branches. It cannot confirm the request's head commit or CI result because the available API needs a patch-set business ID for CI.
+Do NOT run /no-mistakes.
+EOF
+      ;;
     direct-PR:gerrit)
       cat <<EOF
 # Definition of done
@@ -353,7 +419,7 @@ Gerrit has no pull requests, so there is nothing to open; publishing creates the
 The task is complete only when committed on your branch.
 When it is implemented and committed, publish it.
 EOF
-      fm_gerrit_publish_block
+      fm_gerrit_publish_block "$base"
       cat <<EOF
 Do NOT run /no-mistakes.
 EOF
@@ -372,7 +438,7 @@ Firstmate will then instruct you to run /no-mistakes to validate.
 That first \`done:\` is the handoff that starts the pipeline; it is not a request to publish.
 
 EOF
-      fm_nm_driving_block "$forge"
+      fm_nm_driving_block "$forge" "$base"
       cat <<EOF
 
 Because \`push\` is skipped, the pipeline's fixes DO NOT arrive in your checkout: each fix round commits onto a branch inside no-mistakes' own local gate repository, and with no push nothing carries those commits back to you.
@@ -388,7 +454,7 @@ When the run's outcome is passed, passed-with-skips, or passed-with-override and
 The squashed change carries only the oldest commit's message, so the pipeline's own fix commits never reach the reviewer's description; your report is how they reach the captain.
 After publishing and immediately before your ready report, append one line \`note [at=<epoch>]: pipeline changes: {finding} - {fix it made}; {finding} - {fix it made}\` to the status file, one short clause per finding the run fixed, taken from the run's \`fixes\` table and the gate findings its drive calls returned (\`no-mistakes axi logs --step <step> --full\` has the detail); write \`note [at=<epoch>]: pipeline changes: none\` when it fixed nothing.
 EOF
-      fm_gerrit_publish_block
+      fm_gerrit_publish_block "$base"
       ;;
     direct-PR:*)
       cat <<EOF
@@ -397,7 +463,7 @@ Delivery contract: mode=direct-PR
 Ship branch: $branch
 This task ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
-When it is implemented and committed, push your branch and open a PR with \`gh-axi\` that is ready for review, not a draft.
+When it is implemented and committed, push your branch and open a PR with \`gh-axi\` that is ready for review, not a draft.$pr_instruction
 Before you report done, read the PR back from the forge and confirm it is not a draft (\`gh-axi pr view <number>\` must print \`draft: no\`, where <number> is the PR number from your PR URL); if it is a draft, mark it ready with \`gh-axi pr ready <number>\`.
 A draft cannot be merged, so a done report on one leaves the merge unasked.
 Then append \`done [at=<epoch>]: PR {url}\` to the status file and stop.
@@ -414,9 +480,9 @@ Ship branch: $branch
 This task ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`$branch\`. Do NOT push, do NOT open a PR, do NOT merge.
 A \`done:\` is accepted when the named head is on this project's shared local branch, not only on a detached copy; the check tests that head, not merely that a branch moved.
-Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+Keep your branch a clean fast-forward onto the current base branch - if the base has advanced, rebase onto it so the eventual merge stays a fast-forward.
 When it is implemented and committed, append \`done [at=<epoch>]: ready in branch $branch\` to the status file and stop.
-The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
+The configured merge authority approves the ready branch, then firstmate merges it into the local base branch through the guarded fast-forward path.
 EOF
       ;;
     no-mistakes:*)
@@ -430,7 +496,7 @@ Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 That first \`done:\` is the handoff that starts the pipeline, which owns the push; it is not a request to push from this copy.
 
 EOF
-      fm_nm_driving_block "$forge"
+      fm_nm_driving_block "$forge" "$base"
       cat <<EOF
 
 After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), read the PR back from the forge and confirm it is not a draft (\`gh-axi pr view <number>\` must print \`draft: no\`, where <number> is the PR number from your PR URL); if it is a draft, mark it ready with \`gh-axi pr ready <number>\`.
@@ -616,6 +682,30 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
   [ "$mode" = local-only ] && fm_dod_ref_contains "$project" refs/heads "$sha"
 }
 
+fm_dod_codeup_merged() {  # <worktree> <project> <line> <state> <id> <meta>
+  local wt=$1 project=$2 line=$3 state=$4 id=$5 meta=$6 sha branch base note mr_id mr_url receipt marker script_dir
+  [ "$(fm_dod_meta_value "$meta" forge)" = push-only ] || return 1
+  [ "$(status_line_verb "$line")" = 'done' ] || return 1
+  [ -n "$state" ] && [ -n "$id" ] && [ -d "$state" ] || return 1
+  sha=$(git -C "$wt" rev-parse --verify HEAD 2>/dev/null) || return 1
+  branch=$(fm_dod_meta_value "$meta" branch)
+  [ -n "$branch" ] || return 1
+  note=$(status_line_note "$line")
+  if [[ "$note" =~ ^Codeup[[:space:]]MR[[:space:]]([0-9]+)[[:space:]](https://[^[:space:]]+)$ ]]; then
+    mr_id=${BASH_REMATCH[1]}
+    mr_url=${BASH_REMATCH[2]}
+  else
+    return 1
+  fi
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  base=$("$script_dir/fm-project-mode.sh" --base-branch "$(basename "$project")" 2>/dev/null) || return 1
+  [ -n "$base" ] || return 1
+  receipt=$(printf '%s\t%s\t%s\t%s\t%s' "$sha" "$branch" "$base" "$mr_id" "$mr_url")
+  marker="$state/$id.codeup-accepted"
+  [ -f "$marker" ] && [ ! -L "$marker" ] && [ "$(cat "$marker")" = "$receipt" ] || return 1
+  "$script_dir/fm-codeup-change-request.sh" verify-merged "$wt" "$branch" "$base" "$mr_id" "$mr_url" >/dev/null 2>&1
+}
+
 # 0 when <line> is not a ship done: to gate, when it names the task's recorded
 # PR whose head the forge holds, when it names a Gerrit change whose current
 # patch set carries the worker copy's HEAD tree, or otherwise when its named
@@ -628,9 +718,11 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 # pr_head=, and the merge-notified marker; <meta> may be a captured copy
 # (bin/fm-fleet-snapshot.sh), so the marker is read from <state>.
 fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta>]
-  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit
+  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit forge branch remote_sha note base mr_id mr_url script_dir receipt marker receipt_tmp
   fm_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0
-  if url=$(fm_dod_pr_url_from_done_note "$(status_line_note "$line")") \
+  forge=$(fm_dod_meta_value "$meta" forge)
+  if [ "$forge" != push-only ] \
+    && url=$(fm_dod_pr_url_from_done_note "$(status_line_note "$line")") \
     && fm_dod_recorded_pr_on_forge "$state" "$id" "$meta" "$mode" "$url"; then
     return 0
   fi
@@ -646,6 +738,55 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     printf '%s\n' "named head could not be resolved"
     return 1
   }
+  if [ "$forge" = push-only ]; then
+    branch=$(fm_dod_meta_value "$meta" branch)
+    note=$(status_line_note "$line")
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    base=$("$script_dir/fm-project-mode.sh" --base-branch "$(basename "$project")" 2>/dev/null) || {
+      printf '%s\n' 'registered base branch cannot be read for push-only completion'
+      return 1
+    }
+    if [ -z "$base" ]; then
+      printf '%s\n' 'registered base branch is required for push-only completion'
+      return 1
+    fi
+    if [[ "$note" =~ ^Codeup[[:space:]]MR[[:space:]]([0-9]+)[[:space:]](https://[^[:space:]]+)$ ]]; then
+      mr_id=${BASH_REMATCH[1]}
+      mr_url=${BASH_REMATCH[2]}
+    else
+      printf '%s\n' 'Codeup done must report the merge request number and web URL'
+      return 1
+    fi
+    if [ -z "$state" ] || [ -z "$id" ] || [ ! -d "$state" ]; then
+      printf '%s\n' 'Codeup acceptance state is unavailable'
+      return 1
+    fi
+    if fm_dod_codeup_merged "$wt" "$project" "$line" "$state" "$id" "$meta"; then
+      return 0
+    fi
+    receipt=$(printf '%s\t%s\t%s\t%s\t%s' "$sha" "$branch" "$base" "$mr_id" "$mr_url")
+    marker="$state/$id.codeup-accepted"
+    remote_sha=$(fm_run_timed 10 git -C "$wt" ls-remote --heads origin "refs/heads/$branch" 2>/dev/null) || remote_sha=
+    remote_sha=$(printf '%s\n' "$remote_sha" | awk -v r="refs/heads/$branch" '$2 == r {print $1}')
+    if [ "$remote_sha" != "$sha" ]; then
+      printf '%s\n' "origin branch $branch does not hold named head $sha"
+      return 1
+    fi
+    if ! "$script_dir/fm-codeup-change-request.sh" verify "$wt" "$branch" "$base" "$mr_id" "$mr_url" >/dev/null; then
+      printf '%s\n' "Codeup merge request $mr_id was not verified on the live repository for $branch -> $base"
+      return 1
+    fi
+    receipt_tmp=$(mktemp "$state/.codeup-accepted-$id.XXXXXX") || {
+      printf '%s\n' 'Codeup acceptance could not be recorded'
+      return 1
+    }
+    if ! printf '%s\n' "$receipt" > "$receipt_tmp" || ! chmod 600 "$receipt_tmp" || ! mv -f -- "$receipt_tmp" "$marker"; then
+      rm -f -- "$receipt_tmp"
+      printf '%s\n' 'Codeup acceptance could not be recorded'
+      return 1
+    fi
+    return 0
+  fi
   gerrit=0
   [ -n "$url" ] && fm_pr_url_parse "$url" && [ "$FM_PR_PROVIDER" = gerrit ] && gerrit=1
   if [ "$gerrit" = 0 ] && fm_dod_note_reports_published_change "$(status_line_note "$line")"; then

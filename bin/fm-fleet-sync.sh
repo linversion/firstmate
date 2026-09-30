@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Refresh project clones: fast-forward the checked-out local default branch to
-# origin/<default> when safe, and prune local branches whose upstream tracking
+# Refresh project clones: fast-forward the checked-out local base branch to
+# origin/<base> when safe, and prune local branches whose upstream tracking
 # branch is gone (the remote branch was deleted, i.e. its PR merged) and that no
-# worktree still needs.
+# worktree still needs, excluding the registered base even if its remote is gone.
+# Base selection follows bin/fm-project-base-lib.sh.
 # Self-heals the one unambiguously safe drift: a clean, detached HEAD that holds
-# no unique commits (it is an ancestor of origin/<default>) and whose <default>
+# no unique commits (it is an ancestor of origin/<base>) and whose <base>
 # branch is free to check out is re-attached and then fast-forwarded ("recovered:").
-# Every other off-default state - a non-default named branch, a detached HEAD with
-# unique commits, a dirty tree, or a diverged default - may hold real work, so it
+# Every other off-base state - a non-base named branch, a detached HEAD with
+# unique commits, a dirty tree, or a diverged base - may hold real work, so it
 # is left untouched and reported as a quantified, loud "STUCK: ... N commits behind
 # ... - needs attention" warning rather than a quiet drift. Nothing is ever forced,
 # stashed, or discarded.
@@ -117,20 +118,11 @@ resolve_project_arg() {
   printf '%s\n' "$arg"
 }
 
+# shellcheck source=bin/fm-project-base-lib.sh
+. "$SCRIPT_DIR/fm-project-base-lib.sh"
+
 default_branch() {
-  local ref branch
-  ref=$(git -C "$PROJ" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
-  if [ -n "$ref" ]; then
-    echo "${ref#origin/}"
-    return 0
-  fi
-  for branch in main master; do
-    if git -C "$PROJ" show-ref --verify --quiet "refs/heads/$branch"; then
-      echo "$branch"
-      return 0
-    fi
-  done
-  return 1
+  fm_project_base_branch "$PROJ"
 }
 
 first_line() {
@@ -227,13 +219,13 @@ prune_gone_branches() {
   # that still has a worktree (a live or not-yet-torn-down task). "Gone" plus
   # "no worktree" already proves the work landed: teardown removes a branch's
   # worktree only after confirming the work reached the remote. We deliberately
-  # do NOT also require the branch to be an ancestor of origin/<default> - PRs in
+  # do NOT also require the branch to be an ancestor of origin/<base> - PRs in
   # this fleet are squash-merged, so a merged branch is never an ancestor and
   # such a check would prune nothing. The no-worktree guard is the real safety
   # net. Set FM_FLEET_PRUNE=0 to skip pruning entirely.
   [ "${FM_FLEET_PRUNE:-1}" != "0" ] || return 0
 
-  local worktree_branches current refline branch track
+  local worktree_branches current refline branch track protected_base=${1:-}
   worktree_branches=$(git -C "$PROJ" worktree list --porcelain 2>/dev/null \
     | sed -n 's#^branch refs/heads/##p')
   current=$(git -C "$PROJ" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
@@ -243,6 +235,7 @@ prune_gone_branches() {
     track=${refline#* }
     [ "$track" = "[gone]" ] || continue
     [ -n "$branch" ] || continue
+    [ "$branch" != "$protected_base" ] || continue
     [ "$branch" != "$current" ] || continue
     if printf '%s\n' "$worktree_branches" | grep -Fxq -- "$branch"; then
       continue
@@ -291,7 +284,7 @@ stuck_state() {
 }
 
 # Loud, quantified report for a clone we deliberately leave untouched. Includes
-# how far behind origin/<default> it is, so a chronically-stuck clone is visibly
+# how far behind origin/<base> it is, so a chronically-stuck clone is visibly
 # distinct from a benign one-off skip.
 report_stuck() {
   local state=$1 behind
@@ -300,6 +293,7 @@ report_stuck() {
 }
 
 sync_project() {
+  local registered_base
   PROJ=$1
   label=$(project_label)
 
@@ -336,6 +330,12 @@ sync_project() {
     return 0
   fi
   if ! git -C "$PROJ" remote get-url origin >/dev/null 2>&1; then
+    local registered_base
+    registered_base=$("$FM_ROOT/bin/fm-project-mode.sh" --base-branch "$label") || return 1
+    if [ -n "$registered_base" ]; then
+      echo "$label: skipped: registered base branch '$registered_base' requires an origin remote"
+      return 0
+    fi
     echo "$label: skipped: no origin remote"
     return 0
   fi
@@ -349,12 +349,17 @@ sync_project() {
     return 0
   fi
 
-  prune_gone_branches || true
+  registered_base=$("$FM_ROOT/bin/fm-project-mode.sh" --base-branch "$label") || {
+    echo "$label: skipped: cannot determine registered base branch"
+    return 0
+  }
+  prune_gone_branches "$registered_base" || true
 
   DEFAULT=$(default_branch) || {
     echo "$label: skipped: cannot determine default branch"
     return 0
   }
+
   BASE="origin/$DEFAULT"
   if ! git -C "$PROJ" rev-parse --verify --quiet "$BASE^{commit}" >/dev/null; then
     echo "$label: skipped: $BASE does not exist"
@@ -367,12 +372,12 @@ sync_project() {
   recovered=no
 
   if [ "$cur" != "$DEFAULT" ]; then
-    # Off the default branch. Auto-recover only the one unambiguously safe drift:
+    # Off the base branch. Auto-recover only the one unambiguously safe drift:
     # a clean, detached HEAD that holds no unique commits (it is an ancestor of
-    # origin/<default>) and whose <default> branch is free to check out here.
+    # origin/<base>) and whose <base> branch is free to check out here.
     # Re-attaching to an already-published commit strands nothing, and the
     # fast-forward path below then catches the clone up. Anything else - a
-    # non-default named branch, a detached HEAD with unique commits, a dirty tree,
+    # non-base named branch, a detached HEAD with unique commits, a dirty tree,
     # or <default> already checked out elsewhere - may hold real work, so it is
     # reported loudly and left untouched.
     if [ -z "$cur" ] && [ "$dirty" = no ] \
@@ -390,7 +395,7 @@ sync_project() {
       return 0
     fi
   elif [ "$dirty" = yes ]; then
-    # On the default branch but with uncommitted changes we must not disturb.
+    # On the base branch but with uncommitted changes we must not disturb.
     report_stuck "$(stuck_state)"
     return 0
   fi
