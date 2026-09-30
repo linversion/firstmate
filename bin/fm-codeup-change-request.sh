@@ -8,6 +8,7 @@
 # and codeup-get-change-request contracts. A retry lists open requests before
 # creating, so an interrupted create cannot produce a second request for the
 # same source and target. This does not verify the MR's head commit or its CI.
+# Output is MR <local-id> <URL>, using detailUrl when present and webUrl otherwise.
 set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }

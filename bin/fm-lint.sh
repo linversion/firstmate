@@ -5,6 +5,8 @@
 # ambient configuration disabled, and one exact ShellCheck version. CI selects
 # canonical partitions; no-mistakes invokes the context-selected default, so
 # both use this owner without duplicating lint configuration.
+# If PATH has no ShellCheck, an executable .tools/bin/shellcheck under this
+# checkout adds .tools/bin to PATH; the same exact-version check still applies.
 # The explicit --fast mode is local-only and disables ShellCheck's extended
 # dataflow analysis while preserving ordinary shell lint checks and source
 # following. CI, main, and merge-base-less runs keep --norc --external-sources

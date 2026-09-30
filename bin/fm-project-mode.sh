@@ -103,6 +103,7 @@
 # every path that reads the forge binding (default, --forge, and spawn's
 # forge-agreement check) still refuses. --base-branch refuses an empty or invalid
 # branch value, and otherwise prints the confirmed override without a Git probe.
+# All query forms refuse a missing or invalid base for forge=push-only.
 # Usage: fm-project-mode.sh [--raw|--branch-prefix|--base-branch|--forge] <project-name>
 set -eu
 

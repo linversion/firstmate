@@ -2,7 +2,7 @@
 # Refresh project clones: fast-forward the checked-out local base branch to
 # origin/<base> when safe, and prune local branches whose upstream tracking
 # branch is gone (the remote branch was deleted, i.e. its PR merged) and that no
-# worktree still needs.
+# worktree still needs, excluding the registered base even if its remote is gone.
 # Base selection follows bin/fm-project-base-lib.sh.
 # Self-heals the one unambiguously safe drift: a clean, detached HEAD that holds
 # no unique commits (it is an ancestor of origin/<base>) and whose <base>
@@ -219,7 +219,7 @@ prune_gone_branches() {
   # that still has a worktree (a live or not-yet-torn-down task). "Gone" plus
   # "no worktree" already proves the work landed: teardown removes a branch's
   # worktree only after confirming the work reached the remote. We deliberately
-  # do NOT also require the branch to be an ancestor of origin/<default> - PRs in
+  # do NOT also require the branch to be an ancestor of origin/<base> - PRs in
   # this fleet are squash-merged, so a merged branch is never an ancestor and
   # such a check would prune nothing. The no-worktree guard is the real safety
   # net. Set FM_FLEET_PRUNE=0 to skip pruning entirely.
@@ -372,12 +372,12 @@ sync_project() {
   recovered=no
 
   if [ "$cur" != "$DEFAULT" ]; then
-    # Off the default branch. Auto-recover only the one unambiguously safe drift:
+    # Off the base branch. Auto-recover only the one unambiguously safe drift:
     # a clean, detached HEAD that holds no unique commits (it is an ancestor of
-    # origin/<default>) and whose <default> branch is free to check out here.
+    # origin/<base>) and whose <base> branch is free to check out here.
     # Re-attaching to an already-published commit strands nothing, and the
     # fast-forward path below then catches the clone up. Anything else - a
-    # non-default named branch, a detached HEAD with unique commits, a dirty tree,
+    # non-base named branch, a detached HEAD with unique commits, a dirty tree,
     # or <default> already checked out elsewhere - may hold real work, so it is
     # reported loudly and left untouched.
     if [ -z "$cur" ] && [ "$dirty" = no ] \
@@ -395,7 +395,7 @@ sync_project() {
       return 0
     fi
   elif [ "$dirty" = yes ]; then
-    # On the default branch but with uncommitted changes we must not disturb.
+    # On the base branch but with uncommitted changes we must not disturb.
     report_stuck "$(stuck_state)"
     return 0
   fi

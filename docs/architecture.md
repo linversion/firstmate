@@ -486,7 +486,7 @@ Wake-time refreshes can target a single clone by project name, so the primary ho
 `bin/fm-fleet-sync.sh` owns safe fast-forward and detached-HEAD recovery, using the base selected by `bin/fm-project-base-lib.sh`; unsafe checkout states remain untouched and are reported as `STUCK:` with their behind count.
 Fetches blocked by an orphaned `.git/packed-refs.lock` use bounded retries and remove the lock only when the shared staleness proof can prove it abandoned; [configuration.md](configuration.md#toolchain) owns the recovery details and tuning knobs.
 Local-only projects, clones without an origin remote, and fetch failures remain benign skips.
-The refresh also prunes local branches whose remote is gone and that no worktree still needs.
+The refresh also prunes unused branches under `bin/fm-fleet-sync.sh`'s protection rules.
 
 ## Self-updates stay safe
 

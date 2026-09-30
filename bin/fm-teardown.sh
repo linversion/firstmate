@@ -45,13 +45,13 @@
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
 # hard-resets/removes the worktree and kills its processes. Work has landed when it is
 # reachable from any remote-tracking branch (a fork counts as a remote, so
-# upstream-contribution PRs pushed to a fork satisfy this in any mode), OR - for a
+# upstream-contribution PRs pushed to a fork satisfy this outside push-only), OR - for a
 # normal ship task whose commits are not so reachable - when its PR is merged and
 # GitHub reports a PR head that contains the current local work, or its content is
 # already present in the up-to-date base branch. This recognizes the common
 # squash-merge-then-delete-branch flow, where the branch's own commits live nowhere
-# on a remote yet the change is fully in main.
-# Squash merges collapse the branch's commits, so per-commit patch ids against main
+# on a remote yet the change is fully in the base branch.
+# Squash merges collapse the branch's commits, so per-commit patch ids against the base
 # no longer match, and a pipeline rebase can leave the local worktree diverged from
 # the PR head. A diverged copy is not treated as landed: path-set coverage, git
 # cherry, and merge-tree containment each fail to prove content landed without also
@@ -66,8 +66,11 @@
 # by itself causes a false refusal of landed work.
 # A gh lookup error falls back to the content check; if that is also inconclusive,
 # teardown refuses rather than risk discarding unlanded work.
+# Push-only ships instead require the accepted receipt and live merged-request
+# proof owned by fm_dod_codeup_merged in bin/fm-dod-lib.sh, or content already in
+# the refreshed base. Remote-tracking reachability alone cannot permit cleanup.
 # Uncommitted changes are never landed.
-# local-only projects additionally accept work merged into the local default
+# local-only projects additionally accept work merged into the local base
 # branch (firstmate performs that merge after configured approval) as a fallback
 # for the common case where there is no remote at all.
 # Scout tasks (kind=scout in meta) carve out of that check: their worktree is
@@ -1584,7 +1587,8 @@ content_in_default() {
 
 # Has the worktree's committed work actually LANDED, though its commits are not
 # reachable from any remote-tracking branch? True when a merged PR proves the
-# current local work is contained in the PR head, OR the content is already in the
+# current local work is contained in the PR head (the Codeup receipt check applies
+# instead for push-only), OR the content is already in the
 # base branch (fallback, which also covers the no-PR and gh-error paths). False
 # only for genuinely unlanded work.
 work_is_landed() {

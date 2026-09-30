@@ -64,6 +64,10 @@
 # deadline; stale remote-tracking refs and partial output cannot pass.
 # bin/fm-codeup-change-request.sh also verifies the reported
 # Codeup request number and URL with a live read of repository and branch IDs.
+# An accepted head, branch, base, request number, and URL are recorded together;
+# that same receipt plus a live MERGED read preserves completion after landing,
+# even if the source branch is deleted. Changed receipt fields require fresh
+# acceptance through the live-origin and open-request checks.
 # That API does not prove the request's head commit or CI result.
 # tests/fm-task-delivery.test.sh covers that gate for promoted workers too.
 # The two PR-based blocks require a non-draft pull request before the done
