@@ -13,8 +13,8 @@
 #   The key lives in one shell variable and reaches curl as a header read from
 #   a file descriptor, never on argv; nothing logs or writes it.
 #
-# What it does when on with at least one rule: one POST to
-#   https://api.typesafe.ai/v1/systemone with the project name and the brief's
+# What it does when on with at least one rule: one POST to the configured
+#   base URL's /v1/systemone with the project name and the brief's
 #   `## Captain's intent` and `## Firstmate spec` sections, tagged when it is a
 #   scout brief (the whole brief when it has neither section), as state and
 #   ONE Choice question whose options are every rule's `when` from
@@ -59,11 +59,13 @@
 #   error     -> API, network, response, or quota-axi failure; decide as today
 #   Every outcome exits 0 so an intake is never blocked by this tool.
 #   Exit 2 only for a usage or configuration error (unreadable brief, an
-#   existing unreadable rules file, malformed rules, or missing jq), which is
+#   existing unreadable rules file, malformed rules or resolver settings, or
+#   missing jq), which is
 #   actionable, never selected around.
 #
 # Environment:
-#   TYPESAFE_API_KEY is the only resolver-specific environment setting.
+#   TYPESAFE_API_BASE, TYPESAFE_MODEL, and TYPESAFE_TIMEOUT optionally select
+#   the service base URL, model, and request timeout. See docs/configuration.md.
 #
 # Authority: this tool never replaces firstmate's judgment, quota-array-dispatch,
 #   the captain-approval gate, or fm-spawn.sh validation; it publishes one
@@ -73,6 +75,11 @@ set -u
 TYPESAFE_API_KEY_PRIVATE=${TYPESAFE_API_KEY:-}
 export -n TYPESAFE_API_KEY_PRIVATE 2>/dev/null || true
 unset TYPESAFE_API_KEY
+TS_BASE=${TYPESAFE_API_BASE:-}
+TS_MODEL=${TYPESAFE_MODEL:-}
+TS_TIMEOUT=${TYPESAFE_TIMEOUT:-}
+export -n TS_BASE TS_MODEL TS_TIMEOUT 2>/dev/null || true
+unset TYPESAFE_API_BASE TYPESAFE_MODEL TYPESAFE_TIMEOUT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
@@ -91,9 +98,6 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 . "$SCRIPT_DIR/fm-brief-heading-lib.sh"
 
 CONFIDENCE_FLOOR=0.6
-TS_MODEL=jev-latest
-TS_BASE=https://api.typesafe.ai
-TS_TIMEOUT=5
 DEFAULT_WHEN="No listed rule applies to this task."
 
 die() { printf 'error: %s\n' "$1" >&2; exit 2; }
@@ -128,6 +132,15 @@ if [ -z "$TYPESAFE_API_KEY_PRIVATE" ]; then
   echo "dispatch-resolve: off (TYPESAFE_API_KEY absent from the environment and $FM_HOME/.env)" >&2
   exit 0
 fi
+if [ -z "$TS_BASE" ]; then TS_BASE=$(fmx_env_get TYPESAFE_API_BASE "$FM_HOME/.env"); fi
+if [ -z "$TS_MODEL" ]; then TS_MODEL=$(fmx_env_get TYPESAFE_MODEL "$FM_HOME/.env"); fi
+if [ -z "$TS_TIMEOUT" ]; then TS_TIMEOUT=$(fmx_env_get TYPESAFE_TIMEOUT "$FM_HOME/.env"); fi
+TS_BASE=${TS_BASE:-https://api.typesafe.ai}
+TS_MODEL=${TS_MODEL:-jev-latest}
+TS_TIMEOUT=${TS_TIMEOUT:-5}
+[[ $TS_BASE =~ ^https?://[^/?#@[:space:]]+(/[^?#[:space:]]*)?$ ]] && [[ $TS_BASE != */ ]] || die "TYPESAFE_API_BASE must be an http or https base URL without user info, query, fragment, or trailing slash"
+[[ ! $TS_MODEL =~ [[:space:]] ]] || die "TYPESAFE_MODEL must be non-empty and contain no whitespace"
+[[ $TS_TIMEOUT =~ ^0*([1-9]|[1-9][0-9]|1[01][0-9]|120)$ ]] || die "TYPESAFE_TIMEOUT must be a whole number from 1 to 120"
 
 # ---- inputs --------------------------------------------------------------------
 [ -n "$BRIEF" ] || die "brief file required (see --help)"
