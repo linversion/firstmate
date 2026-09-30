@@ -1382,11 +1382,11 @@ By accepted design, a `clear` result does not enforce catalog/authentication, re
 
 Firstmate passes its profile line unless it states a reason to override, such as the brief's reasoning class or an eligible-unranked-candidate note; every non-clear result returns to the full existing intake.
 
-**Key handling and fixed settings**
+**Key handling and resolver settings**
 
 - The resolver and bootstrap copy an environment-provided key into a non-exported private variable and unset `TYPESAFE_API_KEY` before launching child processes, so the secret is absent from child environments.
 - The resolver sends the key to `curl` only as a header read from a file descriptor, never on argv, and nothing prints, logs, or writes it.
-- The resolver fixes the endpoint at `https://api.typesafe.ai`, model at `jev-latest`, default confidence floor at 0.6, and request timeout at 5 seconds; `TYPESAFE_API_KEY` is its only resolver-specific environment setting.
+- `TYPESAFE_API_BASE`, `TYPESAFE_MODEL`, and `TYPESAFE_TIMEOUT` use the calling environment first and the home's `.env` second, with empty values treated as unset; their defaults are `https://api.typesafe.ai`, `jev-latest`, and 5 seconds, while the confidence floor remains 0.6.
 
 The live rule-match evidence is recorded in [`verification/dispatch-resolve.md`](verification/dispatch-resolve.md).
 
@@ -2513,6 +2513,9 @@ FMX_ENV_FILE=           # optional alternate .env file for direct Relay client i
 FMX_DRY_RUN=            # truthy previews Relay replies and dismissals to state/x-outbox/ without posting or requiring a token
 FMX_X_REPLY_MAX_CHARS=280   # X reply per-message split budget; values below 50 clamp to 50
 TYPESAFE_API_KEY=       # typed dispatch resolution opt-in, from the environment or .env; absent means bin/fm-dispatch-resolve.sh is off (docs/configuration.md "Typed dispatch resolution")
+TYPESAFE_API_BASE=      # optional typed dispatch service base URL; defaults to https://api.typesafe.ai
+TYPESAFE_MODEL=         # optional typed dispatch model; defaults to jev-latest
+TYPESAFE_TIMEOUT=       # optional typed dispatch request timeout in seconds; defaults to 5
 FMX_DISCORD_REPLY_MAX_CHARS=1900   # Discord reply per-message split budget; values below 50 clamp to 50, values above 2000 reset to 1900
 FMX_X_THREAD_MAX=25     # maximum messages in one auto-split reply thread
 FMX_FOLLOWUP_MAX_AGE_SECS=604800   # local window for posting Relay completion follow-ups (7 days)
