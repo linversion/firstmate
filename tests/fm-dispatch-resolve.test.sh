@@ -110,7 +110,9 @@ cat > "$FAKEBIN/curl" <<'SH'
 # Fake curl: records argv (minus the -o target), the stdin body, and the header
 # read from fd 3, then answers with FAKE_CURL_RESPONSE and FAKE_CURL_HTTP.
 set -u
-if [ -n "${TYPESAFE_API_KEY+x}" ] || [ -n "${TYPESAFE_API_KEY_PRIVATE+x}" ]; then
+if [ -n "${TYPESAFE_API_KEY+x}" ] || [ -n "${TYPESAFE_API_KEY_PRIVATE+x}" ] ||
+   [ -n "${TYPESAFE_API_BASE+x}" ] || [ -n "${TYPESAFE_MODEL+x}" ] || [ -n "${TYPESAFE_TIMEOUT+x}" ] ||
+   [ -n "${TS_BASE+x}" ] || [ -n "${TS_MODEL+x}" ] || [ -n "${TS_TIMEOUT+x}" ]; then
   printf 'curl:secret-present\n' >> "${CHILD_ENV_LOG:?}"
 else
   printf 'curl:clean\n' >> "${CHILD_ENV_LOG:?}"
@@ -138,7 +140,9 @@ chmod +x "$FAKEBIN/curl"
 cat > "$FAKEBIN/quota-axi" <<'SH'
 #!/usr/bin/env bash
 set -u
-if [ -n "${TYPESAFE_API_KEY+x}" ] || [ -n "${TYPESAFE_API_KEY_PRIVATE+x}" ]; then
+if [ -n "${TYPESAFE_API_KEY+x}" ] || [ -n "${TYPESAFE_API_KEY_PRIVATE+x}" ] ||
+   [ -n "${TYPESAFE_API_BASE+x}" ] || [ -n "${TYPESAFE_MODEL+x}" ] || [ -n "${TYPESAFE_TIMEOUT+x}" ] ||
+   [ -n "${TS_BASE+x}" ] || [ -n "${TS_MODEL+x}" ] || [ -n "${TS_TIMEOUT+x}" ]; then
   printf 'quota-axi:secret-present\n' >> "${CHILD_ENV_LOG:?}"
 else
   printf 'quota-axi:clean\n' >> "${CHILD_ENV_LOG:?}"
@@ -182,6 +186,7 @@ run_without_curl() {
 
 KEY='test-key-9f1c2d3e-never-on-argv'
 code='' out='' err=''
+unset TYPESAFE_API_BASE TYPESAFE_MODEL TYPESAFE_TIMEOUT
 
 # --- absent key: off, silent on stdout, no network, no quota read -----------
 reset_log
@@ -245,6 +250,95 @@ assert_not_contains "$body" 'SECRET-WHY-TEXT' "why text never leaves the machine
 assert_not_contains "$body" 'spendPriority' "quota never leaves the machine"
 assert_not_contains "$body" 'cursor-grok' "use profiles never leave the machine"
 pass "clear: one rule Choice request, key on the fd header only, spendPriority argmax over every candidate"
+
+# --- service settings: environment, .env, precedence, and validation -------
+reset_log
+TYPESAFE_API_KEY=$KEY TYPESAFE_API_BASE='http://localhost:9393/jev' run code out err "$BRIEF"
+expect_code 0 "$code" "environment base URL resolves"
+assert_contains "$(cat "$LOG/argv")" 'http://localhost:9393/jev/v1/systemone' "environment base URL reaches curl"
+reset_log
+TYPESAFE_API_KEY=$KEY TYPESAFE_MODEL='jev-custom' run code out err "$BRIEF"
+expect_code 0 "$code" "environment model resolves"
+assert_equals 'jev-custom' "$(jq -r .model "$LOG/body")" "environment model reaches the request"
+reset_log
+TYPESAFE_API_KEY=$KEY TYPESAFE_TIMEOUT=17 run code out err "$BRIEF"
+expect_code 0 "$code" "environment timeout resolves"
+assert_contains "$(cat "$LOG/argv")" $'--max-time\n17' "environment timeout reaches curl"
+
+printf '%s\n' 'TYPESAFE_API_BASE=https://env.example/v2' > "$HOME_DIR/.env"
+reset_log
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
+expect_code 0 "$code" ".env base URL resolves"
+assert_contains "$(cat "$LOG/argv")" 'https://env.example/v2/v1/systemone' ".env base URL reaches curl"
+printf '%s\n' 'TYPESAFE_MODEL=jev-from-file' > "$HOME_DIR/.env"
+reset_log
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
+expect_code 0 "$code" ".env model resolves"
+assert_equals 'jev-from-file' "$(jq -r .model "$LOG/body")" ".env model reaches the request"
+printf '%s\n' 'TYPESAFE_TIMEOUT=23' > "$HOME_DIR/.env"
+reset_log
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
+expect_code 0 "$code" ".env timeout resolves"
+assert_contains "$(cat "$LOG/argv")" $'--max-time\n23' ".env timeout reaches curl"
+
+printf '%s\n' 'TYPESAFE_API_BASE=https://file.example' 'TYPESAFE_MODEL=jev-file' 'TYPESAFE_TIMEOUT=24' > "$HOME_DIR/.env"
+reset_log
+TYPESAFE_API_KEY=$KEY TYPESAFE_API_BASE=https://process.example TYPESAFE_MODEL=jev-process TYPESAFE_TIMEOUT=31 run code out err "$BRIEF"
+expect_code 0 "$code" "environment settings beat .env"
+assert_contains "$(cat "$LOG/argv")" 'https://process.example/v1/systemone' "environment base wins"
+assert_contains "$(cat "$LOG/argv")" $'--max-time\n31' "environment timeout wins"
+assert_equals 'jev-process' "$(jq -r .model "$LOG/body")" "environment model wins"
+assert_equals $'curl:clean\nquota-axi:clean' "$(cat "$LOG/child-env")" "service settings are absent from child environments"
+reset_log
+TYPESAFE_API_KEY=$KEY TYPESAFE_API_BASE='' TYPESAFE_MODEL='' TYPESAFE_TIMEOUT='' run code out err "$BRIEF"
+expect_code 0 "$code" "empty environment settings fall back to .env"
+assert_contains "$(cat "$LOG/argv")" 'https://file.example/v1/systemone' "empty environment base uses .env"
+assert_contains "$(cat "$LOG/argv")" $'--max-time\n24' "empty environment timeout uses .env"
+assert_equals 'jev-file' "$(jq -r .model "$LOG/body")" "empty environment model uses .env"
+rm -f "$HOME_DIR/.env"
+pass "service settings resolve from environment and .env without leaking to children"
+
+for bad_base in 'ftp://example.test' 'https://user@example.test' 'https://example.test?x=1' 'https://example.test#part' 'https://example.test/'; do
+  reset_log
+  TYPESAFE_API_KEY=$KEY TYPESAFE_API_BASE="$bad_base" run code out err "$BRIEF"
+  expect_code 2 "$code" "malformed TYPESAFE_API_BASE refuses"
+  assert_contains "$err" 'TYPESAFE_API_BASE' "base URL error names the setting"
+  assert_absent "$LOG/argv" "malformed base URL sends no request"
+done
+for bad_model in '  ' $'jev\tlatest'; do
+  reset_log
+  TYPESAFE_API_KEY=$KEY TYPESAFE_MODEL="$bad_model" run code out err "$BRIEF"
+  expect_code 2 "$code" "malformed TYPESAFE_MODEL refuses"
+  assert_contains "$err" 'TYPESAFE_MODEL' "model error names the setting"
+  assert_absent "$LOG/argv" "malformed model sends no request"
+done
+for bad_timeout in 0 121 1.5 abc -1; do
+  reset_log
+  TYPESAFE_API_KEY=$KEY TYPESAFE_TIMEOUT="$bad_timeout" run code out err "$BRIEF"
+  expect_code 2 "$code" "malformed TYPESAFE_TIMEOUT refuses"
+  assert_contains "$err" 'TYPESAFE_TIMEOUT' "timeout error names the setting"
+  assert_absent "$LOG/argv" "malformed timeout sends no request"
+done
+printf '%s\n' 'TYPESAFE_TIMEOUT=121' > "$HOME_DIR/.env"
+reset_log
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
+expect_code 2 "$code" "malformed .env timeout refuses"
+assert_contains "$err" 'TYPESAFE_TIMEOUT' ".env timeout error names the setting"
+assert_absent "$LOG/argv" "malformed .env timeout sends no request"
+printf '%s\n' 'TYPESAFE_API_BASE=https://file.example/' > "$HOME_DIR/.env"
+reset_log
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
+expect_code 2 "$code" "malformed .env base URL refuses"
+assert_contains "$err" 'TYPESAFE_API_BASE' ".env base URL error names the setting"
+assert_absent "$LOG/argv" "malformed .env base URL sends no request"
+printf '%s\n' 'TYPESAFE_MODEL="jev latest"' > "$HOME_DIR/.env"
+reset_log
+TYPESAFE_API_KEY=$KEY run code out err "$BRIEF"
+expect_code 2 "$code" "malformed .env model refuses"
+assert_contains "$err" 'TYPESAFE_MODEL' ".env model error names the setting"
+assert_absent "$LOG/argv" "malformed .env model sends no request"
+rm -f "$HOME_DIR/.env"
+pass "malformed service settings refuse before sending a request"
 
 # --- never-send list: a match or a bad list withholds the request -------------
 NEVER_SEND="$HOME_DIR/config/dispatch-never-send"
