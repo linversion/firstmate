@@ -320,6 +320,62 @@ JS
     count=$(grep -c ' arm generation=.* child=1 ownership=owned' "$HOME_DIR/state/.watch-extension.log" || true)
     [ "$count" -eq "$expected" ] || fail "startup duplicate arm launches (Pi $PI_VERSION)"
   }
+  foreign_home="$LAB/foreign-home"
+  foreign_project="$LAB/foreign-project"
+  foreign_config="$LAB/foreign-pi-config"
+  foreign_probe="$PROJECT/.pi/extensions/foreign-pi-probe.ts"
+  mkdir -p "$foreign_home/state" "$foreign_home/config" "$foreign_project" "$foreign_config"
+  cat > "$foreign_probe" <<'JS'
+import { appendFileSync } from "node:fs";
+export default function(pi) {
+  pi.on("session_start", () => appendFileSync(process.env.FOREIGN_PID_FILE, `${process.pid}\n`));
+}
+JS
+  "$TMUX" -L "$SOCKET" new-session -d -s pi-foreign-owner -c "$foreign_project" \
+    "env PI_CODING_AGENT_DIR='$foreign_config' PI_OFFLINE=1 FOREIGN_PID_FILE='$foreign_home/owner.pid' pi --approve --no-context-files --no-skills --no-prompt-templates --no-extensions --no-session -e '$foreign_probe'"
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -s "$foreign_home/owner.pid" ]; do sleep 0.1; i=$((i + 1)); done
+  [ -s "$foreign_home/owner.pid" ] || fail "real foreign Pi owner did not start"
+  foreign_pid=$(sed -n '1p' "$foreign_home/owner.pid")
+  printf '%s\n' "$foreign_pid" > "$foreign_home/state/.lock"
+  "$TMUX" -L "$SOCKET" new-session -d -s "$SESSION" -c "$PROJECT" \
+    "env -u FM_STATE_OVERRIDE -u FM_CONFIG_OVERRIDE FM_HOME='$foreign_home' FM_ROOT_OVERRIDE='$PROJECT' FM_WATCH_EXTENSION_LOG_KEEP_LINES=200 FM_POLL=1 FM_SIGNAL_GRACE=0 FM_HEARTBEAT=600 pi --approve --no-context-files --no-extensions --session-dir '$LAB/foreign-candidate-sessions' -e .pi/extensions/startup-probe.ts -e .pi/extensions/fm-primary-turnend-guard.ts -e .pi/extensions/fm-primary-pi-watch.ts"
+  foreign_candidate_pid=
+  i=0
+  while [ "$i" -lt 100 ]; do
+    if [ -s "$foreign_home/state/startup-events.jsonl" ]; then
+      foreign_candidate_pid=$(node --input-type=module - "$foreign_home/state/startup-events.jsonl" <<'JS'
+import { readFileSync } from "node:fs";
+const events = readFileSync(process.argv[2], "utf8").trim().split("\n").map(JSON.parse);
+process.stdout.write(String(events[0]?.pid ?? ""));
+JS
+)
+    fi
+    [ -n "$foreign_candidate_pid" ] && [ -f "$foreign_home/state/.watch-extension.log" ] && \
+      grep -Fq 'arm-skip=foreign-lock' "$foreign_home/state/.watch-extension.log" && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if [ -z "$foreign_candidate_pid" ]; then
+    capture >&2
+    fail "fresh primary with a foreign lock did not start"
+  fi
+  grep -Fq 'arm-skip=foreign-lock' "$foreign_home/state/.watch-extension.log" \
+    || fail "fresh primary did not report the genuine foreign-owner skip"
+  sleep 1.5
+  if grep -F "pid=$foreign_candidate_pid " "$foreign_home/state/.watch-extension.log" | grep -Fq ' child=1 ownership=owned'; then
+    fail "foreign lock candidate armed after the owner changed or startup retry ran"
+  fi
+  printf '%s\n' "$foreign_candidate_pid" > "$foreign_home/state/.lock"
+  sleep 0.6
+  if grep -F "pid=$foreign_candidate_pid " "$foreign_home/state/.watch-extension.log" | grep -Fq ' child=1 ownership=owned'; then
+    fail "a callback armed after the foreign lock changed to the candidate"
+  fi
+  send_prompt /quit
+  wait_pid_dead "$foreign_candidate_pid" || fail "foreign-lock candidate did not quit"
+  "$TMUX" -L "$SOCKET" kill-session -t pi-foreign-owner 2>/dev/null || true
+  wait_pid_dead "$foreign_pid" || fail "foreign Pi owner did not stop"
+  "$TMUX" -L "$SOCKET" kill-session -t "$SESSION" 2>/dev/null || true
   startup_launch
   startup_wait_arm_count 1
   first_pid=$(cat "$HOME_DIR/state/.lock")
@@ -361,7 +417,7 @@ JS
   then
     fail "real Pi startup lifecycle assertions failed"
   fi
-  printf 'ok - Pi %s fresh restart and same-process /new auto-arm once without model turns\n' "$PI_VERSION"
+  printf 'ok - Pi %s fresh restart and same-process /new auto-arm once without model turns; a live foreign Pi lock stays unarmed\n' "$PI_VERSION"
   exit 0
 fi
 

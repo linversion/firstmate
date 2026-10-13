@@ -505,6 +505,7 @@ process.exit(0);
 EOF
   )
   status=$?
+  [ "$status" -eq 0 ] || printf '%s\n' "$out" >&2
   expect_code 0 "$status" "Pi actionable output must wait for predecessor close before successor restoration"
   [ -z "$out" ] || fail "Pi actionable-before-close test printed output: $out"
   pass "Pi actionable output waits for predecessor close before successor restoration"
@@ -5209,7 +5210,7 @@ printf 'watcher: started pid=%s\n' "$$"
 exec sleep 60
 SH
   chmod +x "$repo/bin/fm-watch-arm.sh"
-  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_WATCH_EXTENSION_LOG_KEEP_LINES=100 node --input-type=module 2>&1 <<'JS'
+out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_WATCH_EXTENSION_LOG_KEEP_LINES=100 node --input-type=module 2>&1 <<'JS'
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -5268,15 +5269,6 @@ await start(); await wait(350);
 if (count() !== 2) throw new Error("armed for a reused non-harness PID");
 claim(); await expectCount(3);
 await shutdown("quit"); reused.kill();
-// Foreign live lock is a terminal skip, even if ownership later changes.
-const foreignPath = `${process.env.FM_ROOT_OVERRIDE}/pi`;
-writeFileSync(foreignPath, "process.title = \"pi\"; setInterval(() => {}, 1000);\n");
-const foreign = spawn(process.execPath, [foreignPath]);
-await new Promise(resolve => foreign.once("spawn", resolve));
-writeFileSync(lock, `${foreign.pid}\n`);
-await start(); await wait(350); claim(); await wait(600);
-if (count() !== 3) throw new Error("foreign lock started deferred activation");
-await shutdown("quit"); foreign.kill();
 // Capture and deliberately invoke an old callback after replacement.
 unlinkSync(lock); await start();
 const staleCallback = deferred.at(-1).callback;
@@ -5305,8 +5297,8 @@ claim(); await wait(600);
 if (count() !== 5) throw new Error("expired startup rearmed");
 await shutdown("quit");
 const log = readFileSync(`${process.env.FM_HOME}/state/.watch-extension.log`, "utf8");
-for (const reason of ["ownership=missing", "ownership=owned", "arm-skip=foreign-lock",
-  "arm-skip=stale-generation", "arm-skip=lock-wait-expired"])
+for (const reason of ["ownership=missing", "ownership=owned", "arm-skip=stale-generation",
+  "arm-skip=lock-wait-expired"])
   if (!log.includes(reason)) throw new Error(`missing diagnostic: ${reason}`);
 process.exit(0);
 JS
@@ -5315,7 +5307,7 @@ JS
   [ "$status" -eq 0 ] || printf '%s\n' "$out" >&2
   expect_code 0 "$status" "Pi late startup ownership must arm once without a model turn"
   [ -z "$out" ] || fail "Pi deferred startup test printed output: $out"
-  pass "Pi startup waits safely for owned lock; foreign, stale, quit and expired callbacks stay inert"
+  pass "Pi startup waits safely for owned lock; stale, quit and expired callbacks stay inert"
 }
 
 test_pi_startup_waits_for_owned_lock_without_model_turn
