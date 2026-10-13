@@ -39,6 +39,7 @@ install_pi_watch_extension_fixture() {
   cp "$ROOT/.pi/extensions/lib/fm-operational-input.ts" "$repo/.pi/extensions/lib/fm-operational-input.ts"
   mkdir -p "$repo/bin"
   cp "$ROOT/bin/fm-operational-input.sh" "$repo/bin/fm-operational-input.sh"
+  cp "$ROOT/bin/fm-lock.sh" "$ROOT/bin/fm-session-lock-lib.sh" "$ROOT/bin/fm-cursor-lib.sh" "$repo/bin/"
   chmod +x "$repo/bin/fm-operational-input.sh"
   cat > "$repo/node_modules/@earendil-works/pi-coding-agent/package.json" <<'JSON'
 {"name":"@earendil-works/pi-coding-agent","type":"module","exports":"./index.js"}
@@ -185,8 +186,8 @@ if (tool.label !== "Arm firstmate watcher") throw new Error(`unexpected label: $
 if (tool.parameters?.type !== "object") throw new Error("tool parameters are not a TypeBox object schema");
 const metadata = [tool.description, tool.promptSnippet, ...(tool.promptGuidelines ?? [])].join("\n");
 if (metadata.includes("Always use this tool")) throw new Error(`broad tool-selection metadata remained visible: ${metadata}`);
-if (!tool.description.includes("first required Pi watcher cycle")) throw new Error(`tool description omitted the first-cycle condition: ${tool.description}`);
-if (!tool.promptSnippet.includes("ordinary re-arming is automatic")) throw new Error(`tool snippet omitted automatic continuation: ${tool.promptSnippet}`);
+if (!tool.description.includes("Repair a Pi watcher cycle only after a notification")) throw new Error(`tool description omitted the repair-only condition: ${tool.description}`);
+if (!tool.promptSnippet.includes("startup and ordinary re-arming are automatic")) throw new Error(`tool snippet omitted automatic startup: ${tool.promptSnippet}`);
 if (!tool.promptGuidelines.some((guideline) => guideline.includes("ordinary signal, stale, check, or heartbeat handling"))) {
   throw new Error(`tool guidelines omitted ordinary-notification prevention: ${tool.promptGuidelines}`);
 }
@@ -2900,7 +2901,7 @@ try {
   writeFileSync(lock, `${other.pid}\n`);
   const liveOther = await callArm();
   if (liveOther.details?.ok !== false) throw new Error(`live other holder unexpectedly armed: ${JSON.stringify(liveOther.details)}`);
-  if (liveOther.details.message !== "watcher: read-only - session lock is held by another firstmate session") {
+  if (liveOther.details.message !== "watcher: read-only - session lock ownership is indeterminate") {
     throw new Error(`unexpected live-other response: ${liveOther.details.message}`);
   }
 } finally {
@@ -5416,10 +5417,14 @@ async function expectCount(expected) {
   await wait(600);
   if (count() !== expected) throw new Error(`duplicate arm: ${count()}`);
 }
-// Missing startup lock, then late ownership: no tool or agent event.
+// Empty publication, then late ownership: no tool or agent event.
 await start();
+writeFileSync(lock, "");
 await wait(350);
 if (count()) throw new Error("armed without lock");
+writeFileSync(lock, "in progress\n");
+await wait(350);
+if (count()) throw new Error("armed for malformed lock publication");
 claim();
 await expectCount(1);
 await shutdown("quit");
@@ -5433,29 +5438,39 @@ await start(); await wait(350);
 if (count() !== 1) throw new Error("armed with dead old lock");
 claim(); await expectCount(2);
 await shutdown("quit");
+// A live non-harness PID is reclaimable and must not end the bounded wait.
+const reused = spawn("sleep", ["60"]);
+await new Promise(resolve => reused.once("spawn", resolve));
+writeFileSync(lock, `${reused.pid}\n`);
+await start(); await wait(350);
+if (count() !== 2) throw new Error("armed for a reused non-harness PID");
+claim(); await expectCount(3);
+await shutdown("quit"); reused.kill();
 // Foreign live lock is a terminal skip, even if ownership later changes.
-const foreign = spawn("sleep", ["60"]);
+const foreignPath = `${process.env.FM_ROOT_OVERRIDE}/pi`;
+writeFileSync(foreignPath, "process.title = \"pi\"; setInterval(() => {}, 1000);\n");
+const foreign = spawn(process.execPath, [foreignPath]);
 await new Promise(resolve => foreign.once("spawn", resolve));
 writeFileSync(lock, `${foreign.pid}\n`);
 await start(); await wait(350); claim(); await wait(600);
-if (count() !== 2) throw new Error("foreign lock started deferred activation");
+if (count() !== 3) throw new Error("foreign lock started deferred activation");
 await shutdown("quit"); foreign.kill();
 // Capture and deliberately invoke an old callback after replacement.
 unlinkSync(lock); await start();
 const staleCallback = deferred.at(-1).callback;
 await shutdown("new"); claim();
 await handlers.get("session_start")({ reason: "new" });
-await expectCount(3);
-staleCallback(); await expectCount(3);
+await expectCount(4);
+staleCallback(); await expectCount(4);
 await shutdown("quit");
 // Quit cancels pending startup; late callbacks remain inert even after claim.
 unlinkSync(lock); await start();
 const quitCallback = deferred.at(-1).callback;
 await shutdown("quit"); claim(); quitCallback(); await wait(600);
-if (count() !== 3) throw new Error("quit callback armed a stopped generation");
+if (count() !== 4) throw new Error("quit callback armed a stopped generation");
 // Manual activation during the deferred window cannot double-arm.
 unlinkSync(lock); await start(); claim();
-await tool.execute(); await expectCount(4);
+await tool.execute(); await expectCount(5);
 await shutdown("quit");
 // Expiry stays bounded, with an inspectable skip reason.
 unlinkSync(lock); await start();
@@ -5465,7 +5480,7 @@ const nativeNow = Date.now;
 Date.now = () => nativeNow() + 120001;
 expiredCallback(); Date.now = nativeNow;
 claim(); await wait(600);
-if (count() !== 4) throw new Error("expired startup rearmed");
+if (count() !== 5) throw new Error("expired startup rearmed");
 await shutdown("quit");
 const log = readFileSync(`${process.env.FM_HOME}/state/.watch-extension.log`, "utf8");
 for (const reason of ["ownership=missing", "ownership=owned", "arm-skip=foreign-lock",
