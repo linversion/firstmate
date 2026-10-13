@@ -48,7 +48,7 @@ A failed follow-up never cancels continuity restoration.
 ### Pi startup
 
 Pi arms without a model turn when `session_start` already owns the fleet lock.
-If the lock is missing or its old holder is dead, the extension checks every 250ms for up to two minutes while the asynchronous startup runner acquires it.
+If the lock is missing, stale, or temporarily indeterminate while the asynchronous startup runner publishes it, the extension checks every 250ms for up to two minutes.
 Every attempt rechecks the live generation, lock ownership, and the existing arm single-flight guard.
 A foreign live lock ends that wait without arming; shutdown cancels the wait and stale callbacks cannot act on a replacement generation.
 An expired wait leaves manual repair available through the [Pi supervision protocol](supervision-protocols/pi.md).
@@ -424,7 +424,7 @@ A live foreign holder therefore cannot strand a TERM'd watcher in this marker-lo
 
 ### Pi and OpenCode watch extension
 
-`tests/fm-pi-watch-extension.test.sh` checks Pi's first-cycle-or-explicit-repair tool metadata and ownership-based redundant-call no-ops.
+`tests/fm-pi-watch-extension.test.sh` checks Pi's repair-only tool metadata, startup lock-wait activation, and ownership-based redundant-call no-ops.
 It then simulates actionable and empty child closes against the actual Pi and OpenCode close handlers, and:
 
 - Blocks prompt delivery to prove the successor launches first.
