@@ -1284,6 +1284,103 @@ SH
   pass "the content-landed fallback checks a task's recorded base branch, not the default branch"
 }
 
+test_registered_base_controls_content_landed_check() {
+  local case_dir rc tmp
+  case_dir=$(make_case content-registered-base)
+  write_meta "$case_dir" no-mistakes ship
+  mkdir -p "$case_dir/data"
+  printf '%s\n' '- project [no-mistakes base=develop] - fixture' > "$case_dir/data/projects.md"
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  tmp="$case_dir/_develop"
+  git clone -q "$case_dir/origin.git" "$tmp"
+  git -C "$tmp" checkout -q -b develop
+  printf 'hello\n' > "$tmp/feature.txt"
+  git -C "$tmp" add feature.txt
+  git -C "$tmp" -c user.email=t@t -c user.name=t commit -qm "land on develop"
+  git -C "$tmp" push -q origin develop
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "registered-base content check should accept work landed on develop"
+  assert_absent "$case_dir/state/task-x1.meta" \
+    "registered-base teardown left metadata after proving content landed on develop"
+
+  case_dir=$(make_case content-missing-base)
+  write_meta "$case_dir" no-mistakes ship
+  mkdir -p "$case_dir/data"
+  printf '%s\n' '- project [no-mistakes base=missing-develop] - fixture' > "$case_dir/data/projects.md"
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "teardown accepted a missing registered base"
+  assert_grep "registered base branch 'missing-develop'" "$case_dir/stderr" \
+    "teardown did not name the missing registered base"
+  assert_present "$case_dir/state/task-x1.meta" \
+    "teardown removed task metadata despite the missing base"
+  pass "teardown checks landed content against registered develop and preserves work on missing base"
+}
+
+test_codeup_merged_receipt_allows_conflict_resolution_landing() {
+  local case_dir merged rc
+  case_dir=$(make_case codeup-merged-receipt)
+  write_meta "$case_dir" direct-PR ship
+  printf 'forge=push-only\nbranch=fm/task-x1\n' >> "$case_dir/state/task-x1.meta"
+  printf '%s\n' '- project [direct-PR forge=push-only base=develop] - fixture' > "$case_dir/data/projects.md"
+  git -C "$case_dir/project" checkout -q -b develop
+  git -C "$case_dir/project" push -q origin develop
+  git -C "$case_dir/project" checkout -q main
+  wt_commit_file "$case_dir" feature.txt worker 'worker change'
+  git -C "$case_dir/project" remote set-url origin 'git@codeup.aliyun.com:org/project.git'
+  git -C "$case_dir/project" config "url.$case_dir/origin.git.insteadOf" 'git@codeup.aliyun.com:org/project.git'
+  git -C "$case_dir/wt" push -q origin fm/task-x1:refs/heads/fm/task-x1
+  printf '%s\n' 'done: Codeup MR 7 https://codeup.aliyun.com/org/project/change/7' > "$case_dir/state/task-x1.status"
+  cat > "$case_dir/fakebin/aliyun" <<'SH'
+#!/usr/bin/env bash
+case "$2" in
+  codeup-get-repository) printf '{"id":42,"pathWithNamespace":"org/project"}\n' ;;
+  codeup-get-change-request)
+    printf '{"localId":7,"projectId":42,"sourceProjectId":42,"targetProjectId":42,"sourceBranch":"fm/task-x1","targetBranch":"develop","status":"%s","webUrl":"https://codeup.aliyun.com/org/project/change/7"}\n' "${FM_TEST_CODEUP_STATUS:-UNDER_REVIEW}" ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$case_dir/fakebin/aliyun"
+  FM_DATA_OVERRIDE="$case_dir/data" PATH="$case_dir/fakebin:$PATH" \
+    ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    bash -c '. "$1"; fm_dod_accept_ship_done ship direct-PR "$2" "$3" "$4" "$5" task-x1 "$6"' \
+      _ "$ROOT/bin/fm-dod-lib.sh" "$case_dir/wt" "$case_dir/project" \
+      "$(cat "$case_dir/state/task-x1.status")" "$case_dir/state" "$case_dir/state/task-x1.meta" \
+    || fail 'open Codeup request was not accepted before merge'
+  merged="$case_dir/merged"
+  git clone -q "$case_dir/origin.git" "$merged"
+  git -C "$merged" checkout -q develop
+  printf 'resolved\n' > "$merged/feature.txt"
+  git -C "$merged" add feature.txt
+  git -C "$merged" -c user.email=t@t -c user.name=t commit -qm 'resolve merged content'
+  git -C "$merged" push -q origin develop
+  git -C "$case_dir/project" fetch -q origin '+refs/heads/fm/task-x1:refs/remotes/origin/fm/task-x1'
+  [ "$(git -C "$case_dir/project" rev-parse refs/remotes/origin/fm/task-x1)" = "$(git -C "$case_dir/wt" rev-parse HEAD)" ] \
+    || fail 'stale remote-tracking reference fixture does not point at the ship head'
+  git --git-dir="$case_dir/origin.git" update-ref -d refs/heads/fm/task-x1
+  [ -z "$(git -C "$case_dir/wt" log --oneline HEAD --not --remotes -- 2>/dev/null)" ] \
+    || fail 'stale remote-tracking reference fixture still reports unpushed commits'
+  rc=0
+  FM_TEST_CODEUP_STATUS=CLOSED ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  [ "$rc" -ne 0 ] || fail 'closed Codeup request allowed teardown'
+  assert_present "$case_dir/state/task-x1.meta" 'closed Codeup request removed task metadata'
+  rc=0
+  FM_TEST_CODEUP_STATUS=MERGED ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "merged Codeup request should allow teardown after conflict resolution: $(cat "$case_dir/stderr")"
+  assert_absent "$case_dir/state/task-x1.meta" 'merged Codeup teardown retained task metadata'
+  assert_absent "$case_dir/state/task-x1.codeup-accepted" 'merged Codeup teardown retained acceptance receipt'
+  pass 'merged Codeup receipt allows teardown after conflict resolution and branch deletion'
+}
+
 test_content_fallback_refreshes_stale_origin_ref() {
   local case_dir rc
   case_dir=$(make_case content-stale-ref)
@@ -5077,6 +5174,8 @@ test_pr_check_does_not_refresh_stale_pr_head
 test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_fallback_allows
 test_content_fallback_uses_recorded_base_branch
+test_registered_base_controls_content_landed_check
+test_codeup_merged_receipt_allows_conflict_resolution_landing
 test_content_fallback_refreshes_stale_origin_ref
 test_dirty_worktree_refuses
 test_untracked_only_refusal_diagnostic

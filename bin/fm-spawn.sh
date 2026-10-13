@@ -38,16 +38,17 @@
 #   prints a one-line deviation notice and continues, because the registered
 #   prefix is the captain's standing preference and the brief agreement above
 #   already guarantees the worker's instructions match the branch.
-#   --base-branch is the optional branch selected at intake for a ship or scout
-#   to start from and target instead of origin's default branch. A fresh launch
-#   resets its pooled copy to origin/<branch>, refusing when the project has no
-#   origin or origin lacks that branch, or when the project's registered forge
-#   cannot carry it. It must agree with every Setup "Base branch:" line in the
-#   brief (bin/fm-brief.sh --base-branch writes one; other such lines are prose),
-#   and a brief with such a line refuses a spawn without the flag. The spawn records it as
-#   base_branch= in state/<id>.meta, which a relaunch reuses and later review and
-#   cleanup read; it is refused on secondmates and relaunches, and without it
-#   nothing changes.
+#   Base selection for fresh ship/scout tasks is explicit --base-branch, then
+#   the registry's base= binding, then origin's default branch. Both selected
+#   named forms require a matching scaffold Setup pair (fm_brief_base_branches);
+#   a task-specific pair without a flag or registry binding refuses the spawn.
+#   The effective named base is recorded as base_branch=; relaunch, promotion,
+#   review, and cleanup reuse it rather than substituting a newer registry base.
+#   An explicit base requires origin and a real origin branch; registered bases
+#   have the same fail-closed requirement. local-only and Gerrit accept only
+#   their registered base, Forgejo refuses named bases, and push-only Codeup
+#   must target its registered base. Secondmates have no task base; relaunch
+#   refuses --base-branch overrides and never refreshes or resets the worktree.
 #   Ship/scout launches always put fm-dod-lib.sh's current worker role scope
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
@@ -670,6 +671,8 @@ if [ -e "$STATE" ] || [ -L "$STATE" ]; then
 fi
 # shellcheck source=bin/fm-ff-lib.sh
 . "$SCRIPT_DIR/fm-ff-lib.sh"
+# shellcheck source=bin/fm-project-base-lib.sh
+. "$SCRIPT_DIR/fm-project-base-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
@@ -3232,6 +3235,11 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
       fi
     fi
   fi
+  REGISTERED_BASE=$("$FM_ROOT/bin/fm-project-mode.sh" --base-branch "$(basename "$PROJ_ABS")") || exit 1
+  if ! BASE_FORGE=$("$FM_ROOT/bin/fm-project-mode.sh" --forge "$(basename "$PROJ_ABS")"); then
+    echo "error: registry entry for $(basename "$PROJ_ABS") does not resolve to a delivery posture; correct data/projects.md" >&2
+    exit 1
+  fi
   if [ "$RELAUNCH" -eq 1 ]; then
     BASE_BRANCH=$(fm_meta_get "$RELAUNCH_META" base_branch)
   elif [ "$BASE_BRANCH_SET" -eq 1 ]; then
@@ -3239,14 +3247,24 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
       echo "error: --base-branch requires a branch name" >&2
       exit 1
     }
-    BASE_FORGE=$("$FM_ROOT/bin/fm-project-mode.sh" --forge "$(basename "$PROJ_ABS")") || exit 1
-    fm_base_branch_valid "$BASE_BRANCH" "$MODE" "${BASE_FORGE:-none}" "fm-spawn.sh --base-branch" || exit 1
+    fm_base_branch_valid "$BASE_BRANCH" "$MODE" "${BASE_FORGE:-none}" "fm-spawn.sh --base-branch" "$REGISTERED_BASE" || exit 1
     if ! fm_brief_base_branches "$BRIEF" >/dev/null || fm_brief_base_branches "$BRIEF" | grep -vxF -- "$BASE_BRANCH" >/dev/null; then
       echo "error: $BRIEF must record Base branch: $BASE_BRANCH and no other Base branch line to spawn with --base-branch $BASE_BRANCH; scaffold it with bin/fm-brief.sh --base-branch $BASE_BRANCH" >&2
       exit 1
     fi
+  elif [ -n "$REGISTERED_BASE" ]; then
+    BASE_BRANCH=$REGISTERED_BASE
+    fm_base_branch_valid "$BASE_BRANCH" "$MODE" "${BASE_FORGE:-none}" "fm-spawn.sh registered base" "$REGISTERED_BASE" || exit 1
+    if ! fm_brief_base_branches "$BRIEF" >/dev/null || fm_brief_base_branches "$BRIEF" | grep -vxF -- "$BASE_BRANCH" >/dev/null; then
+      echo "error: $BRIEF must record Base branch: $BASE_BRANCH matching the registered base; re-scaffold the brief" >&2
+      exit 1
+    fi
   elif fm_brief_base_branches "$BRIEF" >/dev/null; then
     echo "error: $BRIEF records a Base branch line but the spawn has no --base-branch; pass the brief's base with --base-branch or re-scaffold the brief without one" >&2
+    exit 1
+  fi
+  if [ "$RELAUNCH" -eq 0 ] && [ "$BASE_FORGE" = push-only ] && [ "$BASE_BRANCH" != "$REGISTERED_BASE" ]; then
+    echo "error: Codeup delivery must target its registered base '$REGISTERED_BASE'" >&2
     exit 1
   fi
   # Use the existing launch-brief overlay for every worker kind, including
@@ -3348,6 +3366,10 @@ if [ "$KIND" = ship ]; then
   # manufacture one.
   if [ "$STANDING_FORGE" = gerrit ] && [ "$YOLO" = on ]; then
     echo "error: --yolo on is refused for $ID: $PROJ_NAME is registered forge=gerrit, where yolo is inactive because a Code-Review+2 is a positive attributed claim that a named human approved and firstmate must not manufacture one (captain's decision 2026-09-15); spawn with --yolo off" >&2
+    exit 1
+  fi
+  if [ "$STANDING_FORGE" = push-only ] && [ "$YOLO" = on ]; then
+    echo "error: --yolo on is refused for $ID: forge=push-only leaves remote landing to a human" >&2
     exit 1
   fi
   # The registry holds the captain's standing posture, so dropping below it is
@@ -3547,9 +3569,15 @@ freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
     fi
     return 1
   fi
+  local registered_base
+  registered_base=$("$FM_ROOT/bin/fm-project-mode.sh" --base-branch "$(basename "$PROJ_ABS")") || return 1
   if ! spawn_worktree_has_origin_config "$worktree"; then
-    [ -z "$base" ] || {
-      echo "error: pooled worktree '$worktree' has no origin, so it cannot start from base branch '$base'" >&2
+    [ -z "${base:-$registered_base}" ] || {
+      if [ -n "$registered_base" ] && [ "${base:-$registered_base}" = "$registered_base" ]; then
+        echo "error: registered base branch '$registered_base' requires an origin remote for pooled worktree '$worktree'" >&2
+      else
+        echo "error: pooled worktree '$worktree' has no origin, so it cannot start from base branch '$base'" >&2
+      fi
       return 1
     }
     return 0
@@ -3558,8 +3586,8 @@ freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
     echo "error: could not fetch origin for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
     return 1
   fi
-  if [ -n "$base" ]; then
-    default=$base
+  if [ -n "${base:-$registered_base}" ]; then
+    default=${base:-$registered_base}
   else
     if ! git -C "$worktree" remote set-head origin --auto >/dev/null 2>&1; then
       echo "error: could not resolve origin's current default branch for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
@@ -3572,7 +3600,11 @@ freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
   fi
   target="origin/$default"
   if ! git -C "$worktree" fetch --quiet origin "+refs/heads/$default:refs/remotes/origin/$default"; then
-    echo "error: could not fetch '$target' for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
+    if [ -n "$registered_base" ] && [ "$default" = "$registered_base" ]; then
+      echo "error: registered base branch '$registered_base' does not exist on origin or origin cannot be read" >&2
+    else
+      echo "error: could not fetch '$target' for pooled worktree '$worktree'; refusing to launch from a potentially stale base" >&2
+    fi
     return 1
   fi
   expected=$(git -C "$worktree" rev-parse --verify --quiet "$target^{commit}" 2>/dev/null) || {
@@ -5202,7 +5234,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode forge yolo branch tasktmp base_branch model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5216,6 +5248,7 @@ preserve_relaunch_meta() {
   echo "harness=$HARNESS"
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"
+  [ -z "${STANDING_FORGE:-}" ] || [ "$STANDING_FORGE" = none ] || echo "forge=$STANDING_FORGE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
   [ -z "${BRANCH:-}" ] || echo "branch=$BRANCH"
   echo "tasktmp=$TASK_TMP"

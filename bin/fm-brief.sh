@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--forge <none|gerrit|forgejo> [--shape squash]] [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--forge <none|gerrit|forgejo|push-only> [--shape squash]] [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--base-branch <branch>] [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -40,13 +40,15 @@
 #   omitted contract cannot be silent.
 # For ship tasks, --mode is REQUIRED and shapes the definition of done. Firstmate
 # resolves it per task at intake (AGENTS.md section 7); data/projects.md holds the
-# captain's standing posture as context, and this script never reads it:
+# captain's standing posture as context, not as this script's mode selection:
 #   no-mistakes  implement -> /no-mistakes pipeline -> PR -> configured merge authority
-#   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> configured merge authority
+#   direct-PR    implement -> publish per fm-dod-lib.sh (no pipeline)
 #   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
-#                the configured merge authority approves, firstmate merges to local main
+#                the configured merge authority approves, firstmate merges to the local base
 # no-mistakes-prod-only is a registry policy, not a task mode; resolve it to one of
 # the three concrete modes at intake before calling this script.
+# Ship and scout setup read the registered base via fm-project-mode.sh using the
+# repo argument's basename; ship delivery passes it to fm-dod-lib.sh as well.
 # --branch-prefix <prefix> optionally overrides the ship branch's "fm/" prefix, so
 # the resolved branch is "<prefix><task-id>" instead of the default "fm/<task-id>".
 # Pass an empty prefix ("--branch-prefix ''") for a bare "<task-id>" branch, or a
@@ -59,13 +61,10 @@
 # standing per-project preference, and firstmate resolves it per task at intake
 # and passes the explicit flag. Refused on --scout and --secondmate: a scout
 # makes no branch and a charter is not a delivery contract.
-# --base-branch <branch> starts the task from origin's <branch> instead of the
-# repository default, for work that belongs on a named integration, feature, or
-# release branch. It writes a "Base branch: <branch>" line under `# Setup`, which
-# bin/fm-spawn.sh requires to agree with the same --base-branch it is passed to
-# choose the copy's starting point, and a ship's
-# Definition of done then targets that branch with its pull request.
-# bin/fm-dod-lib.sh's fm_base_branch_valid owns which deliveries accept one.
+# --base-branch <branch> explicitly selects the task base; otherwise the
+# registered base= is used. Both named forms write the same scaffold Setup pair.
+# bin/fm-spawn.sh owns selection, agreement, freshness, and metadata semantics;
+# bin/fm-dod-lib.sh's fm_base_branch_valid owns mode/forge compatibility.
 # Refused on --secondmate.
 # --forge names the project's forge, defaults to none, and is orthogonal to --mode
 # exactly as the registry's `forge=` token is. It is the captain's confirmed
@@ -307,7 +306,6 @@ if [ "$BASE_BRANCH_SET" -eq 1 ]; then
     echo "error: --base-branch takes a branch name and applies only to ship and scout briefs" >&2
     exit 1
   fi
-  fm_base_branch_valid "$BASE_BRANCH" "$MODE" "$FORGE" "fm-brief.sh --base-branch" || exit 1
 fi
 ID=${POS[0]}
 BRANCH="$BRANCH_PREFIX$ID"
@@ -518,6 +516,13 @@ exit 0
 fi
 
 REPO=${POS[1]}
+REGISTERED_BASE=$("$SCRIPT_DIR/fm-project-mode.sh" --base-branch "$(basename "$REPO")") || exit 1
+[ "$BASE_BRANCH_SET" -eq 1 ] || BASE_BRANCH=$REGISTERED_BASE
+fm_base_branch_valid "$BASE_BRANCH" "$MODE" "$FORGE" "fm-brief.sh --base-branch" "$REGISTERED_BASE" || exit 1
+if [ "$FORGE" = push-only ] && [ "$BASE_BRANCH" != "$REGISTERED_BASE" ]; then
+  echo "error: Codeup delivery must target its registered base '$REGISTERED_BASE'" >&2
+  exit 1
+fi
 
 if [ "$HERDR_LAB" -eq 1 ]; then
 HERDR_LAB_HELPER=$(shell_quote "$FM_ROOT/bin/fm-herdr-lab.sh")
@@ -676,8 +681,8 @@ case "$MODE" in
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
     ;;
 esac
-RULE1=$(fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
-DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
+RULE1=$(fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$REGISTERED_BASE") || exit 1
+DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH" "$REGISTERED_BASE") || exit 1
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
