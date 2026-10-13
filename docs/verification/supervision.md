@@ -870,3 +870,28 @@ Observed output:
 ```
 
 The safe command-channel contract is covered without a notification by `tests/fm-daemon.test.sh`: the summary reaches both `$1` and stdin, every channel is process-group bounded, and a failed channel falls through.
+
+## Pi deferred startup activation
+
+Verified 2026-10-13 on macOS with Pi 1.2.0 and Node v24.20.0.
+The current startup boundary is owned by [watcher continuity](../watcher-continuity.md#pi-startup).
+
+```sh
+bash bin/fm-test-run.sh tests/fm-pi-watch-extension.test.sh
+FM_PI_LIVE_E2E=1 FM_PI_LIVE_STARTUP_ONLY=1 bash bin/fm-test-run.sh tests/fm-pi-primary-live-e2e.test.sh
+```
+
+```text
+ok - Pi startup waits safely for owned lock; foreign, stale, quit and expired callbacks stay inert
+ok - Pi 1.2.0 fresh restart and same-process /new auto-arm once without model turns
+```
+
+The portable fixture checks both a missing and a proven-dead old lock, manual activation during the wait, the wait deadline, foreign ownership, and deliberately invoked stale callbacks after replacement and terminal quit.
+The same suite retains held-lock replacement, reload, terminal cleanup, and ordinary actionable-successor coverage.
+The live guard uses a private tmux socket, isolated home, the real Pi startup supervisor, production lock acquisition and production watcher arm, with only the digest runner replaced by a delayed lock-acquisition fixture.
+It verifies a live watcher singleton and beacon after each activation and verifies that startup arm precedes any model turn.
+Its event probe records Pi's actual PID and session identity: `/new` keeps the PID and changes the session identity; restart changes the PID and exercises the dead old lock.
+A shared session JSONL path is never used as evidence of process continuity.
+Pi-signed loads the same extension, but its separate executable was unavailable and was not live-tested in this run.
+Other primary harnesses do not load this Pi watcher implementation; the generation and lock guards do not depend on the runtime session backend, which remains unchanged.
+Strict no-emit checking against the installed Pi 1.2.0 reports the same two pre-existing `BeforeAgentStartEvent.prompt` errors on the unchanged baseline and this implementation, in the watcher and branch-supervision extensions; this run does not establish strict Pi 1.2.0 type compatibility.

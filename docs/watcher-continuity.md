@@ -45,6 +45,16 @@ Each adapter:
 Pi treats an arm child whose process is already gone as an empty slot even while its close event is still pending, so a repair call or a scheduled retry starts a fresh arm instead of answering unchanged.
 A failed follow-up never cancels continuity restoration.
 
+### Pi startup
+
+Pi arms without a model turn when `session_start` already owns the fleet lock.
+If the lock is missing or its old holder is dead, the extension checks every 250ms for up to two minutes while the asynchronous startup runner acquires it.
+Every attempt rechecks the live generation, lock ownership, and the existing arm single-flight guard.
+A foreign live lock ends that wait without arming; shutdown cancels the wait and stale callbacks cannot act on a replacement generation.
+An expired wait leaves manual repair available through the [Pi supervision protocol](supervision-protocols/pi.md).
+A positive `FM_WATCH_EXTENSION_LOG_KEEP_LINES` enables bounded startup ownership, activation, arm-launch and skip-reason records in `state/.watch-extension.log`; logging remains disabled by default.
+The focused regression is `tests/fm-pi-watch-extension.test.sh`, and the real Pi startup guard is `FM_PI_LIVE_E2E=1 FM_PI_LIVE_STARTUP_ONLY=1 bin/fm-test-run.sh tests/fm-pi-primary-live-e2e.test.sh`.
+
 ### Pi session replacement
 
 Pi same-process session replacement follows the generation-owner contract in `.pi/extensions/fm-primary-pi-watch.ts`:
