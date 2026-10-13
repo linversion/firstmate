@@ -288,8 +288,8 @@ test_forge_selection_renders_correct_cli() {
     assert_contains "$out" "$expect" "$label was refused without its reason"
     [ ! -e "$home/data/brief-forge-bad/brief.md" ] || fail "$label left a brief behind"
   done <<'ROWS'
-a value outside the closed set|--mode direct-PR --forge gitlab|expected none, gerrit, or forgejo
-the removed github value|--mode direct-PR --forge github|expected none, gerrit, or forgejo
+a value outside the closed set|--mode direct-PR --forge gitlab|expected none, gerrit, forgejo, or push-only
+the removed github value|--mode direct-PR --forge github|expected none, gerrit, forgejo, or push-only
 forgejo on local-only|--mode local-only --forge forgejo|cannot ship mode=local-only
 a shape on forgejo|--mode direct-PR --forge forgejo --shape squash|--shape applies only with --forge gerrit
 forgejo on a scout|--scout --forge forgejo|apply only to ship briefs
@@ -385,7 +385,7 @@ test_faster_paths_use_configured_authority_without_stacked_review() {
   id="brief-local-authority-a4"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" local-proj --mode local-only >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
-  assert_grep "The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path." "$brief" \
+  assert_grep "The configured merge authority approves the ready branch, then firstmate merges it into the local base branch through the guarded fast-forward path." "$brief" \
     "local-only brief lost configured merge authority and guarded landing"
   assert_no_grep "The captain approves the ready branch" "$brief" \
     "local-only brief hard-coded captain-only authority"

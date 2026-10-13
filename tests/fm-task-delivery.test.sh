@@ -442,7 +442,8 @@ test_promotion_persists_the_selected_ship_branch() {
 test_promotion_branch_command_is_shell_safe() {
   local home id prefix marker meta instructions command repo branch
   home="$TMP_ROOT/promote-branch-shell-safe/home"
-  marker="$TMP_ROOT/promote-branch-shell-safe-marker"
+  # Absolute temporary paths can contain dot-prefixed components, invalid in refs.
+  marker=promote-branch-shell-safe-marker
   id=promote-branch-safe-e3
   prefix="\$(touch\${IFS}$marker)/"
   meta="$home/state/$id.meta"
@@ -452,8 +453,8 @@ test_promotion_branch_command_is_shell_safe() {
     || fail "shell-safe promotion scout brief should scaffold"
   fill_brief_subsections "$home/data/$id/brief.md" \
     "Promote the shell-safe fixture." "Use the configured branch exactly."
-  FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" \
-    --mode local-only --yolo off --branch-prefix "$prefix" >/dev/null 2>&1 \
+  ( cd "$home" && FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" \
+    --mode local-only --yolo off --branch-prefix "$prefix" ) >/dev/null 2>&1 \
     || fail "a ref-format-valid metacharacter prefix should promote safely"
   instructions="$home/data/$id/ship-instructions.md"
   # shellcheck disable=SC2016  # Single quotes are required: the sed expression holds literal backticks.
@@ -462,7 +463,8 @@ test_promotion_branch_command_is_shell_safe() {
   repo="$TMP_ROOT/promote-branch-shell-safe-repo"
   git init -q "$repo" || fail "could not initialize shell-safety fixture repository"
   ( cd "$repo" && eval "$command" ) || fail "promotion branch-creation command did not run"
-  assert_absent "$marker" "promotion branch command executed the prefix's command substitution"
+  assert_absent "$home/$marker" "promotion executed the prefix's command substitution"
+  assert_absent "$repo/$marker" "promotion branch command executed the prefix's command substitution"
   branch=$(git -C "$repo" branch --show-current)
   [ "$branch" = "$prefix$id" ] \
     || fail "promotion branch command did not create the literal configured branch (got '$branch')"
@@ -499,6 +501,52 @@ EOF
   assert_contains "$out" "merged fix/$id into local $main" \
     "local merge did not report the immutable recorded branch"
   pass "fm-merge-local: a registry change cannot redirect an in-flight local-only task"
+}
+
+test_local_merge_uses_registered_base() {
+  local home proj origin id default base_tip fix out
+  home="$TMP_ROOT/local-merge-base/home"
+  proj="$TMP_ROOT/local-merge-base/proj"
+  origin="$TMP_ROOT/local-merge-base/origin.git"
+  id=local-merge-base-e2
+  mkdir -p "$home/state" "$home/data" "$proj"
+  git -C "$proj" init -q
+  git -C "$proj" config user.email test@example.com
+  git -C "$proj" config user.name test
+  git -C "$proj" commit -q --allow-empty -m base
+  default=$(git -C "$proj" branch --show-current)
+  git init -q --bare "$origin"
+  git -C "$proj" remote add origin "$origin"
+  git -C "$proj" push -q origin "$default"
+  git -C "$proj" checkout -q -b develop
+  printf 'integration\n' > "$proj/integration"
+  git -C "$proj" add integration
+  git -C "$proj" commit -qm integration
+  git -C "$proj" push -q origin develop
+  base_tip=$(git -C "$proj" rev-parse HEAD)
+  git -C "$proj" checkout -q -b "fix/$id"
+  printf 'ship\n' > "$proj/ship"
+  git -C "$proj" add ship
+  git -C "$proj" commit -qm ship
+  fix=$(git -C "$proj" rev-parse HEAD)
+  git -C "$proj" checkout -q develop
+  printf '%s\n' '- proj [local-only base=develop] - fixture' > "$home/data/projects.md"
+  printf 'project=%s\nmode=local-only\nbranch=fix/%s\n' "$proj" "$id" > "$home/state/$id.meta"
+  printf 'base_branch=%s\n' "$default" >> "$home/state/$id.meta"
+  if out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$MERGE_LOCAL" "$id" 2>&1); then
+    fail 'local landing silently retargeted a recorded base after registration changed'
+  fi
+  assert_contains "$out" 'refusing to retarget the landing' 'local base drift refusal was unclear'
+  [ "$(git -C "$proj" rev-parse develop)" = "$base_tip" ] || fail 'refused local landing advanced develop'
+  printf 'project=%s\nmode=local-only\nbranch=fix/%s\nbase_branch=develop\n' "$proj" "$id" > "$home/state/$id.meta"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$MERGE_LOCAL" "$id") \
+    || fail "local merge refused registered develop base: $out"
+  [ "$(git -C "$proj" rev-parse develop)" = "$fix" ] \
+    || fail "local merge did not advance registered develop"
+  [ "$(git -C "$proj" rev-parse "$default")" != "$fix" ] \
+    || fail "local merge advanced remote default instead of registered develop"
+  [ "$base_tip" != "$fix" ] || fail "fixture did not advance the ship branch"
+  pass "local merge lands on registered develop while the remote default stays put"
 }
 
 # A registered name may contain spaces, and the lookup must match the whole
@@ -1677,6 +1725,352 @@ EOF
   pass "fm-project-mode: --branch-prefix resolves order-independently and defaults to the legacy fm/ prefix"
 }
 
+test_registered_base_and_push_only_contract() {
+  local home out status brief query rejected
+  home="$TMP_ROOT/push-only/home"
+  mkdir -p "$home/data"
+  printf '%s\n' '- project [base=develop direct-PR branch=contrib/ forge=push-only] - fixture' > "$home/data/projects.md"
+  out=$(FM_HOME="$home" "$PROJECT_MODE" project)
+  [ "$out" = 'direct-PR off' ] || fail "base and push-only changed default posture: $out"
+  out=$(FM_HOME="$home" "$PROJECT_MODE" --base-branch project)
+  [ "$out" = develop ] || fail "registered base did not resolve to develop: $out"
+  out=$(FM_HOME="$home" "$PROJECT_MODE" --forge project)
+  [ "$out" = push-only ] || fail "push-only forge binding was not exposed: $out"
+  out=$(FM_HOME="$home" "$PROJECT_MODE" --branch-prefix project)
+  [ "$out" = contrib/ ] || fail "base token changed ship prefix: $out"
+  out=$(FM_HOME="$home" "$BRIEF" push-only-task project --mode direct-PR --branch-prefix contrib/ --forge push-only)
+  status=$?
+  [ "$status" -eq 0 ] || fail "push-only brief refused: $out"
+  brief="$home/data/push-only-task/brief.md"
+  assert_grep 'Delivery contract: mode=direct-PR forge=push-only' "$brief" \
+    "brief did not record push-only delivery"
+  assert_grep 'git push origin contrib/push-only-task:refs/heads/contrib/push-only-task' "$brief" \
+    "brief did not give an exact branch push"
+  assert_grep 'aliyun devops codeup-create-change-request' "$brief" \
+    "registered-base push-only brief did not give the Codeup publication path"
+  assert_grep 'ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID' "$brief" \
+    "Codeup brief did not name the organization environment value"
+  assert_grep 'ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN' "$brief" \
+    "Codeup brief did not name the access-token environment value"
+  assert_grep 'A human reviews and merges the request in Codeup' "$brief" \
+    "Codeup brief did not stop before review and merge"
+  assert_no_grep 'gh-axi pr create' "$brief" "push-only brief asked for GitHub PR creation"
+  printf '%s\n' '- project [direct-PR forge=push-only base=develop +yolo] - fixture' > "$home/data/projects.md"
+  out=$(FM_HOME="$home" "$PROJECT_MODE" project 2>/dev/null)
+  [ "$out" = 'direct-PR off' ] || fail "push-only allowed standing autonomous merge authority"
+  printf '%s\n' '- project [no-mistakes forge=push-only base=develop] - fixture' > "$home/data/projects.md"
+  if out=$(FM_HOME="$home" "$PROJECT_MODE" project 2>&1); then
+    fail "push-only forge accepted the no-mistakes PR pipeline"
+  fi
+  assert_contains "$out" 'requires direct-PR mode' "unsupported push-only mode refusal was unclear"
+  for out in default forge base branch; do
+    printf '%s\n' '- project [direct-PR forge=push-only] - fixture' > "$home/data/projects.md"
+    case "$out" in
+      default) query= ;;
+      forge) query=--forge ;;
+      base) query=--base-branch ;;
+      branch) query=--branch-prefix ;;
+    esac
+    if [ -n "$query" ]; then
+      rejected=$(FM_HOME="$home" "$PROJECT_MODE" "$query" project 2>&1) && fail "base-less push-only registration was accepted by $out query"
+    elif rejected=$(FM_HOME="$home" "$PROJECT_MODE" project 2>&1); then
+      fail "base-less push-only registration was accepted by $out query"
+    fi
+    assert_contains "$rejected" 'requires a registered base= branch' "base-less $out refusal was unclear"
+  done
+  if out=$(FM_HOME="$home" "$BRIEF" no-base-task project --mode direct-PR --forge push-only 2>&1); then
+    fail 'base-less push-only ship brief was generated'
+  fi
+  assert_contains "$out" 'requires a registered base= branch' 'base-less brief refusal was unclear'
+  printf '%s\n' '- project [direct-PR base=] - fixture' > "$home/data/projects.md"
+  if out=$(FM_HOME="$home" "$PROJECT_MODE" --base-branch project 2>&1); then
+    fail "empty registered base was accepted"
+  fi
+  assert_contains "$out" "invalid base branch" "empty base refusal was not explicit"
+  pass "registry base query and push-only brief preserve default posture and render Codeup publication"
+}
+
+test_codeup_publish_and_live_done_gate() {
+  local case_dir home wt origin fakebin meta out note count
+  case_dir="$TMP_ROOT/codeup-publish"
+  home="$case_dir/home"
+  wt="$case_dir/project"
+  origin="$case_dir/origin.git"
+  fakebin="$case_dir/bin"
+  mkdir -p "$home/data" "$home/state" "$fakebin"
+  git init -q -b develop "$case_dir/seed"
+  git -C "$case_dir/seed" -c user.name=test -c user.email=test@example.invalid commit -qm base --allow-empty
+  git clone -q --bare "$case_dir/seed" "$origin"
+  git clone -q "$origin" "$wt"
+  git -C "$wt" checkout -q -b contrib/codeup-task
+  git -C "$wt" -c user.name=test -c user.email=test@example.invalid commit -qm feature --allow-empty
+  git -C "$wt" remote set-url origin 'git@codeup.aliyun.com:org/project.git'
+  git -C "$wt" config "url.$origin.insteadOf" 'git@codeup.aliyun.com:org/project.git'
+  git -C "$wt" push -q origin contrib/codeup-task:refs/heads/contrib/codeup-task
+  printf '%s\n' '- project [direct-PR base=develop forge=push-only] - fixture' > "$home/data/projects.md"
+  meta="$home/state/codeup-task.meta"
+  printf 'forge=push-only\nbranch=contrib/codeup-task\n' > "$meta"
+  export FM_TEST_CODEUP_LOG="$case_dir/aliyun.log" FM_TEST_CODEUP_CREATED="$case_dir/created"
+  cat > "$fakebin/aliyun" <<'SH'
+#!/usr/bin/env bash
+set -eu
+[ "$1" = devops ] || exit 1
+shift
+command=$1
+shift
+printf '%s\n' "$command $*" >> "$FM_TEST_CODEUP_LOG"
+case "$command" in
+  codeup-get-repository) printf '{"id":42,"pathWithNamespace":"org/project"}\n' ;;
+  codeup-list-change-requests)
+    if [ -f "$FM_TEST_CODEUP_CREATED" ]; then
+      printf '[{"localId":7,"projectId":42,"sourceProjectId":42,"targetProjectId":42,"sourceBranch":"contrib/codeup-task","targetBranch":"develop"}]\n'
+    else printf '[]\n'; fi ;;
+  codeup-create-change-request)
+    : > "$FM_TEST_CODEUP_CREATED"
+    printf '{"localId":7}\n' ;;
+  codeup-get-change-request)
+    printf '{"localId":7,"projectId":42,"sourceProjectId":42,"targetProjectId":42,"sourceBranch":"contrib/codeup-task","targetBranch":"%s","status":"%s","webUrl":"%s"%s}\n' "${FM_TEST_CODEUP_TARGET:-develop}" "${FM_TEST_CODEUP_STATUS:-UNDER_REVIEW}" "${FM_TEST_CODEUP_WEB_URL:-https://codeup.aliyun.com/org/project}" "${FM_TEST_CODEUP_DETAIL_FIELD-,\"detailUrl\":\"https://codeup.aliyun.com/org/project/change/7\"}" ;;
+  *) exit 2 ;;
+esac
+SH
+  chmod +x "$fakebin/aliyun"
+  if out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID='' ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop 2>&1); then
+    fail 'Codeup publication accepted a missing organization ID'
+  fi
+  assert_contains "$out" 'ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID is missing' 'missing environment value was not named'
+  [ ! -s "$FM_TEST_CODEUP_LOG" ] || fail 'Codeup CLI ran without the required environment'
+  git -C "$wt" push -q origin contrib/codeup-task:refs/heads/contrib/remote-only
+  if out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/remote-only develop 2>&1); then
+    fail 'Codeup publication accepted a ship branch without a local branch'
+  fi
+  assert_contains "$out" 'local ship branch contrib/remote-only cannot supply a merge request title' 'missing local ship branch refusal was unclear'
+  if rg -q '^codeup-create-change-request ' "$FM_TEST_CODEUP_LOG"; then
+    fail 'Codeup publication created a request without a local ship branch'
+  fi
+  out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop) || fail 'Codeup publication failed'
+  [ "$out" = 'MR 7 https://codeup.aliyun.com/org/project/change/7' ] || fail "Codeup publication did not report the read-back request: $out"
+  rg -q '^codeup-create-change-request .* --title feature$' "$FM_TEST_CODEUP_LOG" || fail 'Codeup publication did not use the local ship branch subject'
+  git -C "$wt" remote set-url origin 'https://user:secret-token@codeup.aliyun.com/org/project.git'
+  out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop) || fail "credentialed Codeup origin was rejected: $out"
+  [ "$out" = 'MR 7 https://codeup.aliyun.com/org/project/change/7' ] || fail "credentialed Codeup publication changed its result: $out"
+  rg -q '^codeup-get-repository --repository-id org%2Fproject$' "$FM_TEST_CODEUP_LOG" || fail 'credentialed Codeup origin included credentials in the repository ID'
+  git -C "$wt" remote set-url origin 'https://user:secret-token@not-codeup.invalid/org/project.git'
+  if out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop 2>&1); then
+    fail 'non-Codeup credentialed origin was accepted'
+  fi
+  assert_not_contains "$out" 'secret-token' 'Codeup origin refusal exposed URL credentials'
+  git -C "$wt" remote set-url origin 'git@codeup.aliyun.com:org/project.git'
+  out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop) || fail 'Codeup publication retry failed'
+  out=$(PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+    FM_TEST_CODEUP_DETAIL_FIELD='' FM_TEST_CODEUP_WEB_URL=https://codeup.aliyun.com/org/project/change/7 \
+    "$ROOT/bin/fm-codeup-change-request.sh" publish "$wt" contrib/codeup-task develop) || fail 'Codeup publication without detailUrl failed'
+  [ "$out" = 'MR 7 https://codeup.aliyun.com/org/project/change/7' ] || fail "Codeup publication did not fall back to webUrl: $out"
+  count=$(rg -c '^codeup-create-change-request ' "$FM_TEST_CODEUP_LOG")
+  [ "$count" -eq 1 ] || fail "Codeup publication opened $count requests on retry"
+  note='done: Codeup MR 7 https://codeup.aliyun.com/org/project/change/7'
+  codeup_gate() {
+    PATH="$fakebin:$PATH" FM_HOME="$home" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture \
+      bash -c '. "$1"; fm_dod_accept_ship_done ship direct-PR "$2" "$2" "$3" "$4" codeup-task "$5"' \
+      _ "$ROOT/bin/fm-dod-lib.sh" "$wt" "$note" "$home/state" "$meta"
+  }
+  if out=$(FM_TEST_CODEUP_STATUS=MERGED codeup_gate 2>&1); then fail 'merged Codeup request passed before first acceptance'; fi
+  [ ! -e "$home/state/codeup-task.codeup-accepted" ] || fail 'unaccepted Codeup request wrote an acceptance receipt'
+  out=$(codeup_gate) || fail "Codeup completion gate rejected live request: $out"
+  printf '%s\n' '- project [direct-PR forge=push-only] - fixture' > "$home/data/projects.md"
+  if out=$(codeup_gate 2>&1); then fail 'base-less Codeup completion was accepted'; fi
+  assert_contains "$out" 'registered base branch cannot be read' 'base-less completion refusal was unclear'
+  printf '%s\n' '- project [direct-PR base=develop forge=push-only] - fixture' > "$home/data/projects.md"
+  git --git-dir="$origin" update-ref -d refs/heads/contrib/codeup-task
+  git -C "$wt" show-ref --verify refs/remotes/origin/contrib/codeup-task >/dev/null || fail 'stale Codeup tracking ref fixture missing'
+  if out=$(codeup_gate 2>&1); then fail 'Codeup completion accepted a deleted remote branch'; fi
+  assert_contains "$out" 'does not hold named head' 'deleted Codeup branch refusal was unclear'
+  git -C "$wt" push -q origin contrib/codeup-task:refs/heads/contrib/codeup-task
+  note='done: Codeup MR 8 https://codeup.aliyun.com/org/project/change/8'
+  if out=$(codeup_gate 2>&1); then fail 'Codeup completion accepted an invented request number'; fi
+  assert_contains "$out" 'was not verified' 'invented Codeup request refusal was unclear'
+  note='done: Codeup MR 7 https://codeup.aliyun.com/org/project/change/7'
+  if out=$(FM_TEST_CODEUP_TARGET=master codeup_gate 2>&1); then fail 'Codeup completion accepted the wrong target branch'; fi
+  assert_contains "$out" 'was not verified' 'wrong Codeup target refusal was unclear'
+  git --git-dir="$origin" update-ref -d refs/heads/contrib/codeup-task
+  out=$(FM_TEST_CODEUP_STATUS=MERGED codeup_gate) || fail "merged Codeup completion was lost after source branch deletion: $out"
+  if out=$(FM_TEST_CODEUP_STATUS=CLOSED codeup_gate 2>&1); then fail 'closed Codeup request was accepted as merged'; fi
+  if out=$(FM_TEST_CODEUP_STATUS=MERGED FM_TEST_CODEUP_TARGET=master codeup_gate 2>&1); then fail 'merged Codeup request on another base was accepted'; fi
+  note='done: Codeup MR 8 https://codeup.aliyun.com/org/project/change/8'
+  if out=$(FM_TEST_CODEUP_STATUS=MERGED codeup_gate 2>&1); then fail 'different merged Codeup request reused an acceptance receipt'; fi
+  note='done: Codeup MR 7 https://codeup.aliyun.com/org/project/change/7'
+  git -C "$wt" -c user.name=test -c user.email=test@example.invalid commit -qm later --allow-empty
+  if out=$(FM_TEST_CODEUP_STATUS=MERGED codeup_gate 2>&1); then fail 'Codeup completion accepted an unpushed later commit'; fi
+  assert_contains "$out" 'does not hold named head' 'Codeup branch-head refusal was unclear'
+  unset FM_TEST_CODEUP_LOG FM_TEST_CODEUP_CREATED
+  pass 'Codeup publication is idempotent and completion requires a live matching request and pushed head'
+}
+
+test_registered_base_reaches_worker_instructions() {
+  local home mode forge forge_annotation base annotation id out ship scout promoted replay expected n=0
+  home="$TMP_ROOT/instruction-base/home"
+  mkdir -p "$home/data" "$home/state"
+  for base in develop "release/\$stable" ''; do
+    annotation=
+    [ -z "$base" ] || annotation=" base=$base"
+    for mode in direct-PR no-mistakes local-only; do
+      for forge in none gerrit push-only; do
+        case "$mode:$forge" in
+          local-only:gerrit|local-only:push-only|no-mistakes:push-only) continue ;;
+          direct-PR:push-only) [ -n "$base" ] || continue ;;
+        esac
+        n=$((n + 1))
+        id="instruction-base-$n"
+        forge_annotation=
+        [ "$forge" = none ] || forge_annotation=" forge=$forge"
+        printf '%s\n' "- fixture-project [$mode$forge_annotation$annotation] - fixture" > "$home/data/projects.md"
+        FM_HOME="$home" "$BRIEF" "$id-ship" fixture-project --mode "$mode" --forge "$forge" >/dev/null 2>&1 \
+          || fail "could not generate $mode/$forge ship brief"
+        ship=$(cat "$home/data/$id-ship/brief.md")
+        FM_HOME="$home" "$BRIEF" "$id" fixture-project --scout >/dev/null 2>&1 \
+          || fail "could not generate scout brief"
+        scout=$(cat "$home/data/$id/brief.md")
+        fill_brief_subsections "$home/data/$id/brief.md" 'Ship the selected change.' 'Implement the selected change.'
+        printf 'window=fm-%s\nkind=scout\nproject=%s/fixture-project\nworktree=%s/wt\n' \
+          "$id" "$home" "$home" > "$home/state/$id.meta"
+        out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" "$id" --mode "$mode" --yolo off 2>&1) \
+          || fail "could not promote $mode/$forge: $out"
+        promoted=$(cat "$home/data/$id/ship-instructions.md")
+        replay=$(cat "$home/data/$id/brief.md")
+        if [ -n "$base" ]; then
+          assert_contains "$ship" "Base branch: $base" 'ship setup lost base'
+          assert_contains "$scout" "Base branch: $base" 'scout setup lost base'
+          printf -v expected 'git checkout -b fm/%s %q --' "$id" "origin/$base"
+          assert_contains "$promoted" "$expected" 'promotion lost base'
+          assert_contains "$replay" "$expected" 'relaunch lost base'
+          if [ "$forge" = gerrit ]; then
+            printf -v expected 'gerrit-axi publish --squash --json --branch %q' "$base"
+            assert_contains "$ship" "$expected" 'ship Gerrit target lost base'
+            assert_contains "$promoted" "$expected" 'promoted Gerrit target lost base'
+          elif [ "$mode:$forge" = direct-PR:none ]; then
+            printf -v expected -- '--base %q' "$base"
+            assert_contains "$ship" "$expected" 'ship PR target lost base'
+            assert_contains "$promoted" "$expected" 'promoted PR target lost base'
+          elif [ "$mode:$forge" = direct-PR:push-only ]; then
+            printf -v expected 'publish . %q %q' "fm/$id-ship" "$base"
+            assert_contains "$ship" "$expected" 'ship Codeup command lost a quoted source or target'
+            printf -v expected 'publish . %q %q' "fm/$id" "$base"
+            assert_contains "$promoted" "$expected" 'promoted Codeup command lost a quoted source or target'
+          fi
+          if [ "$mode" = no-mistakes ]; then
+            printf -v expected -- '--base-branch %q' "$base"
+            assert_contains "$ship" "$expected" 'ship pipeline target lost base'
+            assert_contains "$promoted" "$expected" 'promoted pipeline target lost base'
+            if [ "$forge" = gerrit ]; then
+              assert_not_contains "$ship" 'opens its PR against' 'Gerrit base instruction promised a PR from skipped steps'
+              assert_not_contains "$promoted" 'opens its PR against' 'promoted Gerrit base instruction promised a PR'
+            fi
+          fi
+        else
+          assert_contains "$ship" 'on a clean default branch.' 'legacy ship setup changed'
+          assert_contains "$scout" 'on a clean default branch.' 'legacy scout setup changed'
+          assert_contains "$promoted" 'Return to a clean default-branch base' 'legacy promotion changed'
+          assert_not_contains "$ship" '--base ' 'unregistered PR base added'
+          assert_not_contains "$promoted" '--base-branch ' 'unregistered pipeline base added'
+          if [ "$forge" = gerrit ]; then
+            # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
+            assert_contains "$ship" 'adding `--branch <b>` only when' 'legacy Gerrit target changed'
+          fi
+        fi
+      done
+    done
+  done
+  pass 'registered bases survive generated setup, promotion, and delivery contracts'
+}
+
+test_origin_queries_are_bounded() {
+  local home wt fakebin out start elapsed status action
+  home="$TMP_ROOT/bounded-origin"
+  wt="$home/project"
+  fakebin="$home/bin"
+  mkdir -p "$home/data" "$home/state" "$fakebin"
+  git init -q -b develop "$wt"
+  git -C "$wt" -c user.name=test -c user.email=test@example.invalid commit -qm base --allow-empty
+  git clone -q --bare "$wt" "$home/origin.git"
+  git -C "$wt" remote add origin "$home/origin.git"
+  printf '%s\n' '- project [direct-PR forge=push-only base=develop] - fixture' > "$home/data/projects.md"
+  printf 'forge=push-only\nbranch=develop\n' > "$home/state/task.meta"
+  out=$(FM_HOME="$home" bash -uc 'unset SCRIPT_DIR; . "$1/bin/fm-project-base-lib.sh"; fm_project_base_branch "$2"' _ "$ROOT" "$wt") \
+    || fail 'standalone project base library could not resolve registered base'
+  [ "$out" = develop ] || fail 'standalone base lookup returned wrong branch'
+  export FM_TEST_REAL_GIT FM_TEST_REMOTE_SHA
+  FM_TEST_REAL_GIT=$(command -v git)
+  FM_TEST_REMOTE_SHA=$(git -C "$wt" rev-parse HEAD)
+  cat > "$fakebin/git" <<'SH'
+#!/usr/bin/env bash
+if [ "${3:-}" = ls-remote ]; then
+  printf '%s\trefs/heads/develop\n' "$FM_TEST_REMOTE_SHA"
+  exec sleep 30
+fi
+exec "$FM_TEST_REAL_GIT" "$@"
+SH
+  chmod +x "$fakebin/git"
+  for action in base 'done'; do
+    if [ "$action" = 'done' ]; then
+      printf '%s\n' '- project [direct-PR forge=push-only base=develop] - fixture' > "$home/data/projects.md"
+    fi
+    start=$(date +%s)
+    status=0
+    out=$(FM_HOME="$home" PATH="$fakebin:$PATH" bash -c '
+      if [ "$3" = base ]; then
+        . "$1/bin/fm-project-base-lib.sh"
+        fm_project_base_branch "$2"
+      else
+        . "$1/bin/fm-dod-lib.sh"
+        fm_dod_accept_ship_done ship direct-PR "$2" "$2" "done: Codeup MR 7 https://codeup.aliyun.com/org/project/change/7" "$FM_HOME/state" task "$FM_HOME/state/task.meta"
+      fi
+    ' _ "$ROOT" "$wt" "$action" 2>&1) || status=$?
+    elapsed=$(( $(date +%s) - start ))
+    [ "$status" -ne 0 ] || fail "$action accepted partial output from a stalled origin query"
+    [ "$elapsed" -lt 20 ] || fail "$action origin query exceeded its deadline: ${elapsed}s"
+    case "$action" in
+      base) assert_contains "$out" 'origin cannot be read' 'base timeout did not fail closed' ;;
+      done) assert_contains "$out" 'does not hold named head' 'completion timeout did not fail closed' ;;
+    esac
+  done
+  unset FM_TEST_REAL_GIT FM_TEST_REMOTE_SHA
+  pass 'standalone base resolution works and both origin queries reject stalled partial output'
+}
+
+test_origin_queries_are_bounded
+test_task_base_precedence_and_codeup_target_refusal() {
+  local home brief out promoted
+  home="$TMP_ROOT/base-priority-contract/home"
+  mkdir -p "$home/data" "$home/state"
+  printf '%s\n' '- fixture-project [direct-PR base=main] - fixture' > "$home/data/projects.md"
+  FM_HOME="$home" "$BRIEF" base-priority fixture-project --scout --base-branch feature/hub >/dev/null 2>&1 \
+    || fail 'explicit base could not override the registry default'
+  brief="$home/data/base-priority/brief.md"
+  assert_grep 'Base branch: feature/hub' "$brief" 'brief substituted the registered default'
+  fill_brief_subsections "$brief" 'Ship the selected change.' 'Implement the selected change.'
+  printf 'window=fm-base-priority\nkind=scout\nproject=%s/fixture-project\nworktree=%s/wt\nbase_branch=feature/hub\n' \
+    "$home" "$home" > "$home/state/base-priority.meta"
+  out=$(FM_HOME="$home" "$PROMOTE" base-priority --mode direct-PR --yolo off 2>&1) \
+    || fail "promotion retargeted or refused an explicit base: $out"
+  promoted=$(cat "$home/data/base-priority/ship-instructions.md")
+  # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
+  assert_contains "$promoted" 'against the base branch `feature/hub`' 'promotion used the new registered default'
+  assert_grep 'base_branch=feature/hub' "$home/state/base-priority.meta" 'promotion lost the task base'
+  printf '%s\n' '- fixture-project [direct-PR forge=push-only base=main] - fixture' > "$home/data/projects.md"
+  if out=$(FM_HOME="$home" "$BRIEF" codeup-other-base fixture-project --mode direct-PR --forge push-only --base-branch feature/hub 2>&1); then
+    fail 'Codeup accepted a target other than its registered base'
+  fi
+  assert_contains "$out" 'must target its registered base' 'Codeup target refusal was unclear'
+  pass 'explicit bases survive promotion and Codeup refuses an unregistered target'
+}
+
+test_registered_base_reaches_worker_instructions
+test_task_base_precedence_and_codeup_target_refusal
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
@@ -1688,6 +2082,7 @@ test_promotion_delivers_the_real_definition_of_done
 test_promotion_persists_the_selected_ship_branch
 test_promotion_branch_command_is_shell_safe
 test_local_merge_uses_the_recorded_ship_branch
+test_local_merge_uses_registered_base
 test_project_mode_matches_whole_multiword_names
 test_project_mode_maps_the_conditional_policy
 test_project_mode_binds_the_forge_orthogonally
@@ -1703,4 +2098,6 @@ test_promotion_carries_the_forge_binding
 test_forge_forgejo_rides_the_same_binding
 test_spawn_and_promote_require_filled_task_subsections
 test_project_mode_resolves_branch_prefix
+test_registered_base_and_push_only_contract
+test_codeup_publish_and_live_done_gate
 echo "# all fm-task-delivery tests passed"

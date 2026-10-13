@@ -1074,14 +1074,17 @@ test_installer_rejects_unsupported_platform() {
 }
 
 test_missing_shellcheck_fails_closed() {
-  local tmp fakebin out rc tool
+  local tmp fakebin out rc tool lint_copy
   tmp=$(fm_test_tmproot fm-lint-noshellcheck)
   fakebin=$(fm_fakebin "$tmp")
   for tool in bash dirname; do
     ln -s "$(command -v "$tool")" "$fakebin/$tool"
   done
+  mkdir -p "$tmp/repo/bin"
+  lint_copy="$tmp/repo/bin/fm-lint.sh"
+  cp "$LINT" "$lint_copy"
   rc=0
-  out=$(PATH="$fakebin" CI=true GITHUB_ACTIONS=true "$LINT" 2>&1) || rc=$?
+  out=$(PATH="$fakebin" CI=true GITHUB_ACTIONS=true "$lint_copy" 2>&1) || rc=$?
   [ "$rc" -eq 1 ] || fail "missing ShellCheck expected exit 1, got $rc"$'\n'"$out"
   assert_contains "$out" "ShellCheck not found" \
     "missing ShellCheck did not name the required linter"
