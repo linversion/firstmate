@@ -60,7 +60,7 @@ type ArmResult = {
   message: string;
 };
 
-type LockOwnership = "owned" | "missing" | "other";
+type LockOwnership = "owned" | "missing" | "other" | "foreign";
 
 type CloseClassification = {
   kind: "actionable" | "failure";
@@ -272,11 +272,19 @@ function lockOwnership(): LockOwnership {
     pid = parentPid(pid);
     if (!pid || pid === "1") break;
   }
-  return pidAlive(lockPid) ? "other" : "missing";
+  if (!pidAlive(lockPid)) return "missing";
+  const status = spawnSync("bash", [`${fmRoot}/bin/fm-lock.sh`, "status"], {
+    encoding: "utf8",
+    env: { ...process.env, FM_HOME: fmHome, FM_STATE_OVERRIDE: state, FM_ROOT_OVERRIDE: fmRoot },
+  });
+  return status.status === 0 && status.stdout.trim() === `lock: held by live harness pid ${lockPid}`
+    ? "foreign"
+    : "other";
 }
 
 function publishGenerationOwner(generation: SessionGeneration, phase: "active" | "handoff"): void {
-  if (lockOwnership() === "other") return;
+  const ownership = lockOwnership();
+  if (ownership === "other" || ownership === "foreign") return;
   mkdirSync(state, { recursive: true });
   const temporary = `${marker}.tmp-${process.pid}-${generation.id}`;
   writeFileSync(
@@ -1047,7 +1055,8 @@ export default function (pi: ExtensionAPI) {
   function startArm(owner: SessionGeneration, predecessorArmPid = ""): ArmResult {
     if (!generationIsLive(owner)) return { ok: false, message: shuttingDownMessage };
     const ownership = lockOwnership();
-    if (ownership === "other") return { ok: false, message: "watcher: read-only - session lock is held by another firstmate session" };
+    if (ownership === "foreign") return { ok: false, message: "watcher: read-only - session lock is held by another firstmate session" };
+    if (ownership === "other") return { ok: false, message: "watcher: read-only - session lock ownership is indeterminate" };
     if (ownership === "missing") {
       return {
         ok: false,
@@ -1228,8 +1237,8 @@ export default function (pi: ExtensionAPI) {
       appendExtensionLog(`startup generation=${owner.id} activation=${result.message}`);
       return;
     }
-    if (ownership === "other" || Date.now() >= deadline) {
-      appendExtensionLog(`startup generation=${owner.id} arm-skip=${ownership === "other" ? "foreign-lock" : "lock-wait-expired"}`);
+    if (ownership === "foreign" || Date.now() >= deadline) {
+      appendExtensionLog(`startup generation=${owner.id} arm-skip=${ownership === "foreign" ? "foreign-lock" : "lock-wait-expired"}`);
       return;
     }
     if (owner.startupTimer) return;
