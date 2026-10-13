@@ -51,7 +51,7 @@ On native Windows, the extension runs its session-start, both PreToolUse, turn-e
 
 The primary watcher protocol also requires `.pi/extensions/fm-primary-pi-watch.ts`.
 The Pi engine auto-discovers both tracked project-local extensions once the project is trusted.
-The model arms through the `fm_watch_arm_pi` tool, never through a foreground shell arm.
+Startup arming is extension-owned under the [Pi supervision protocol](../../../../../docs/supervision-protocols/pi.md); the model repairs reported missing, failed, or unhealthy cycles through `fm_watch_arm_pi`, never through a foreground shell arm.
 Native-harness adapters can discover the same guarded FirstMate tools and operational message allowlist through the public Pi event-bus contract in `.pi/extensions/lib/fm-native-contract.ts`; no Pi built-in tools cross that contract.
 The tool result and clean-exit fallback are owned by `../../../docs/supervision-protocols/pi.md`.
 `../../../bin/fm-session-start.sh` reports when the live Pi-family session has not loaded both extensions and points at the selected executable after project trust as the fix, with `-e` as a trust-free fallback.

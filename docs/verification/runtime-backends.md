@@ -2552,3 +2552,7 @@ Without Firstmate's hooks, Herdr reported the question panel as `blocked`, which
 This live proof covers the watcher and queue boundary; it does not establish live daemon-consumer delivery.
 `bin/fm-test-run.sh tests/fm-daemon.test.sh` exercises that consumer routing separately with portable regressions for busy escalation and busy-bookkeeping failures in away and quiet mode.
 Repeat the hooked-worker check above before publication if watcher or task-inbox busy code changes; `bin/fm-test-run.sh tests/fm-task-inbox.test.sh` refreshes the portable ladder regressions.
+
+## Pi startup lock readiness
+
+On 2026-10-13, Pi 1.2.0 passed the isolated real-process restart and same-process `/new` watcher activation guard through tmux; [supervision verification](supervision.md#pi-deferred-startup-activation) owns the commands, output, fixture boundary, Pi-signed availability, and typecheck limitation.
