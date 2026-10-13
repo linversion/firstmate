@@ -5194,6 +5194,117 @@ EOF
   pass "OpenCode healthy arm output does not suppress the turn-end guard"
 }
 
+test_pi_startup_waits_for_owned_lock_without_model_turn() {
+  local repo home plugin out status
+  repo="$TMP_ROOT/pi-startup-deferred-root"
+  home="$TMP_ROOT/pi-startup-deferred-home"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  plugin="$repo/.pi/extensions/fm-primary-pi-watch.ts"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'arm\n' >> "$FM_HOME/arms"
+printf 'watcher: started pid=%s\n' "$$"
+exec sleep 60
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(PLUGIN="$plugin" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_WATCH_EXTENSION_LOG_KEEP_LINES=100 node --input-type=module 2>&1 <<'JS'
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { pathToFileURL } from "node:url";
+const handlers = new Map();
+let tool;
+const pi = { on: (event, handler) => handlers.set(event, handler), registerCommand() {},
+  registerTool: candidate => { tool = candidate; },
+  sendUserMessage: async () => { throw new Error("startup must not require a model turn"); } };
+const lock = `${process.env.FM_HOME}/state/.lock`;
+const count = () => existsSync(`${process.env.FM_HOME}/arms`)
+  ? readFileSync(`${process.env.FM_HOME}/arms`, "utf8").trim().split("\n").length : 0;
+const claim = () => writeFileSync(lock, `${process.pid}\n`);
+const wait = ms => new Promise(resolve => nativeTimeout(resolve, ms));
+const nativeTimeout = globalThis.setTimeout;
+const deferred = [];
+globalThis.setTimeout = (callback, delay, ...args) => {
+  const timer = nativeTimeout(callback, delay, ...args);
+  if (delay === 250) deferred.push({ callback, timer });
+  return timer;
+};
+(await import(pathToFileURL(process.env.PLUGIN))).default(pi);
+async function start() { await handlers.get("session_start")({ reason: "startup" }); }
+async function shutdown(reason) { await handlers.get("session_shutdown")({ reason }); }
+async function expectCount(expected) {
+  for (let i = 0; i < 100 && count() !== expected; i++) await wait(50);
+  if (count() !== expected) throw new Error(`expected ${expected} arms, got ${count()}`);
+  await wait(600);
+  if (count() !== expected) throw new Error(`duplicate arm: ${count()}`);
+}
+// Missing startup lock, then late ownership: no tool or agent event.
+await start();
+await wait(350);
+if (count()) throw new Error("armed without lock");
+claim();
+await expectCount(1);
+await shutdown("quit");
+// A proven dead old lock follows the same bounded startup path.
+const dead = spawn("sleep", ["60"]);
+await new Promise(resolve => dead.once("spawn", resolve));
+const deadClosed = new Promise(resolve => dead.once("close", resolve));
+dead.kill(); await deadClosed;
+writeFileSync(lock, `${dead.pid}\n`);
+await start(); await wait(350);
+if (count() !== 1) throw new Error("armed with dead old lock");
+claim(); await expectCount(2);
+await shutdown("quit");
+// Foreign live lock is a terminal skip, even if ownership later changes.
+const foreign = spawn("sleep", ["60"]);
+await new Promise(resolve => foreign.once("spawn", resolve));
+writeFileSync(lock, `${foreign.pid}\n`);
+await start(); await wait(350); claim(); await wait(600);
+if (count() !== 2) throw new Error("foreign lock started deferred activation");
+await shutdown("quit"); foreign.kill();
+// Capture and deliberately invoke an old callback after replacement.
+unlinkSync(lock); await start();
+const staleCallback = deferred.at(-1).callback;
+await shutdown("new"); claim();
+await handlers.get("session_start")({ reason: "new" });
+await expectCount(3);
+staleCallback(); await expectCount(3);
+await shutdown("quit");
+// Quit cancels pending startup; late callbacks remain inert even after claim.
+unlinkSync(lock); await start();
+const quitCallback = deferred.at(-1).callback;
+await shutdown("quit"); claim(); quitCallback(); await wait(600);
+if (count() !== 3) throw new Error("quit callback armed a stopped generation");
+// Manual activation during the deferred window cannot double-arm.
+unlinkSync(lock); await start(); claim();
+await tool.execute(); await expectCount(4);
+await shutdown("quit");
+// Expiry stays bounded, with an inspectable skip reason.
+unlinkSync(lock); await start();
+const expiredCallback = deferred.at(-1).callback;
+clearTimeout(deferred.at(-1).timer);
+const nativeNow = Date.now;
+Date.now = () => nativeNow() + 120001;
+expiredCallback(); Date.now = nativeNow;
+claim(); await wait(600);
+if (count() !== 4) throw new Error("expired startup rearmed");
+await shutdown("quit");
+const log = readFileSync(`${process.env.FM_HOME}/state/.watch-extension.log`, "utf8");
+for (const reason of ["ownership=missing", "ownership=owned", "arm-skip=foreign-lock",
+  "arm-skip=stale-generation", "arm-skip=lock-wait-expired"])
+  if (!log.includes(reason)) throw new Error(`missing diagnostic: ${reason}`);
+process.exit(0);
+JS
+)
+  status=$?
+  [ "$status" -eq 0 ] || printf '%s\n' "$out" >&2
+  expect_code 0 "$status" "Pi late startup ownership must arm once without a model turn"
+  [ -z "$out" ] || fail "Pi deferred startup test printed output: $out"
+  pass "Pi startup waits safely for owned lock; foreign, stale, quit and expired callbacks stay inert"
+}
+
+test_pi_startup_waits_for_owned_lock_without_model_turn
+
 test_pi_extension_reports_external_healthy_watcher
 test_pi_tool_returns_agent_tool_result
 test_pi_redundant_tool_call_is_owned_noop

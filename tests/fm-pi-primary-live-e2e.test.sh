@@ -13,6 +13,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 unset NO_MISTAKES_GATE
 
 fail() {
+  if [ "${FM_PI_LIVE_STARTUP_ONLY:-0}" = 1 ] && [ -n "${HOME_DIR:-}" ]; then
+    cat "$HOME_DIR/state/startup-events.jsonl" "$HOME_DIR/state/.watch-extension.log" "$HOME_DIR/state/.watch-cycle-exits.log" >&2 2>/dev/null || true
+  fi
   printf 'not ok - %s\n' "$1" >&2
   exit 1
 }
@@ -245,7 +248,7 @@ run_native_ahoy_regressions() {
 
 mkdir -p "$LAB"
 git clone -q "$ROOT" "$PROJECT"
-if [ "$WATCH_ONLY" -eq 0 ]; then
+if [ "$WATCH_ONLY" -eq 0 ] && [ "${FM_PI_LIVE_STARTUP_ONLY:-0}" != 1 ]; then
   run_ahoy_transcript_regressions
   run_native_ahoy_regressions
 fi
@@ -268,6 +271,99 @@ cp "$ROOT/bin/fm-operational-input.sh" "$PROJECT/bin/fm-operational-input.sh"
 cp "$ROOT/bin/fm-supervision-instructions.sh" "$PROJECT/bin/fm-supervision-instructions.sh"
 chmod +x "$PROJECT/bin/fm-operational-input.sh"
 mkdir -p "$HOME_DIR/state" "$HOME_DIR/config"
+
+if [ "${FM_PI_LIVE_STARTUP_ONLY:-0}" = 1 ]; then
+  # Keep real Pi, its async startup supervisor, lock acquisition and watcher arm.
+  # Replace only the digest runner with a deliberately delayed lock acquisition
+  # so this test cannot accidentally pass by owning the lock before session_start.
+  cat > "$PROJECT/bin/fm-sessionstart-run.sh" <<'SH'
+#!/usr/bin/env bash
+sleep 1
+bash "$FM_ROOT_OVERRIDE/bin/fm-lock.sh"
+SH
+  chmod +x "$PROJECT/bin/fm-sessionstart-run.sh"
+  cat > "$PROJECT/.pi/extensions/startup-probe.ts" <<'JS'
+import { appendFileSync } from "node:fs";
+export default function(pi) {
+  pi.on("session_start", (event, ctx) => appendFileSync(
+    `${process.env.FM_HOME}/state/startup-events.jsonl`,
+    JSON.stringify({ pid: process.pid, reason: event.reason, at: Date.now(),
+      session: ctx.sessionManager.getSessionId() }) + "\n"));
+  pi.on("agent_start", () => appendFileSync(
+    `${process.env.FM_HOME}/state/model-events.jsonl`,
+    JSON.stringify({ pid: process.pid, at: Date.now() }) + "\n"));
+}
+JS
+  startup_launch() {
+    "$TMUX" -L "$SOCKET" new-session -d -s "$SESSION" -c "$PROJECT" \
+      "env -u FM_STATE_OVERRIDE -u FM_CONFIG_OVERRIDE FM_HOME='$HOME_DIR' FM_ROOT_OVERRIDE='$PROJECT' FM_WATCH_EXTENSION_LOG_KEEP_LINES=200 FM_POLL=1 FM_SIGNAL_GRACE=0 FM_HEARTBEAT=600 pi --approve --no-context-files --no-extensions --session-dir '$LAB/sessions' -e .pi/extensions/startup-probe.ts -e .pi/extensions/fm-primary-turnend-guard.ts -e .pi/extensions/fm-primary-pi-watch.ts"
+  }
+  startup_wait_arm_count() {
+    local expected=$1 i=0 count=0
+    while [ "$i" -lt 120 ]; do
+      count=$(grep -c ' arm generation=.* child=1 ownership=owned' "$HOME_DIR/state/.watch-extension.log" 2>/dev/null || true)
+      [ "${count:-0}" -eq "$expected" ] && break
+      sleep 0.1
+      i=$((i + 1))
+    done
+    [ "${count:-0}" -eq "$expected" ] || fail "startup expected $expected arm launches, got ${count:-0} (Pi $PI_VERSION)"
+    sleep 1
+    i=0
+    while [ "$i" -lt 150 ]; do
+      if [ -f "$HOME_DIR/state/.watch.lock/pid" ] && kill -0 "$(cat "$HOME_DIR/state/.watch.lock/pid")" 2>/dev/null && [ -f "$HOME_DIR/state/.last-watcher-beat" ]; then break; fi
+      sleep 0.1
+      i=$((i + 1))
+    done
+    [ -f "$HOME_DIR/state/.watch.lock/pid" ] || fail "startup has no watcher singleton"
+    kill -0 "$(cat "$HOME_DIR/state/.watch.lock/pid")" 2>/dev/null || fail "startup watcher is dead"
+    [ -f "$HOME_DIR/state/.last-watcher-beat" ] || fail "startup watcher has no beacon"
+    count=$(grep -c ' arm generation=.* child=1 ownership=owned' "$HOME_DIR/state/.watch-extension.log" || true)
+    [ "$count" -eq "$expected" ] || fail "startup duplicate arm launches (Pi $PI_VERSION)"
+  }
+  startup_launch
+  startup_wait_arm_count 1
+  first_pid=$(cat "$HOME_DIR/state/.lock")
+  send_prompt /new
+  startup_wait_arm_count 2
+  [ "$(cat "$HOME_DIR/state/.lock")" = "$first_pid" ] || fail "/new replaced Pi process"
+  send_prompt /quit
+  wait_pid_dead "$first_pid" || fail "first Pi did not exit"
+  "$TMUX" -L "$SOCKET" kill-session -t "$SESSION" 2>/dev/null || true
+  startup_launch
+  startup_wait_arm_count 3
+  second_pid=$(cat "$HOME_DIR/state/.lock")
+  [ "$second_pid" != "$first_pid" ] || fail "restart did not create a fresh Pi process"
+  send_prompt /quit
+  wait_pid_dead "$second_pid" || fail "restarted Pi did not exit"
+  if ! EVENTS="$HOME_DIR/state/startup-events.jsonl" LOG="$HOME_DIR/state/.watch-extension.log" MODEL_EVENTS="$HOME_DIR/state/model-events.jsonl" node --input-type=module <<'JS'
+import { existsSync, readFileSync } from "node:fs";
+const events = readFileSync(process.env.EVENTS, "utf8").trim().split("\n").map(JSON.parse);
+if (events.length !== 3 || events[0].reason !== "startup" || events[1].reason !== "new" || events[2].reason !== "startup")
+  throw new Error(`unexpected Pi lifecycle: ${JSON.stringify(events)}`);
+if (events[0].pid !== events[1].pid || events[0].pid === events[2].pid || events[0].session === events[1].session)
+  throw new Error(`PID/session boundaries not proven: ${JSON.stringify(events)}`);
+const log = readFileSync(process.env.LOG, "utf8");
+const modelEvents = existsSync(process.env.MODEL_EVENTS)
+  ? readFileSync(process.env.MODEL_EVENTS, "utf8").trim().split("\n").map(JSON.parse) : [];
+for (const event of events) {
+  const arm = log.split("\n").find(line => line.includes(`pid=${event.pid} `) &&
+    line.includes(" child=1 ownership=owned") && Date.parse(line.split(" ")[0]) >= event.at);
+  if (!arm) throw new Error("missing initial arm after lifecycle event");
+  const armAt = Date.parse(arm.split(" ")[0]);
+  if (modelEvents.some(turn => turn.pid === event.pid && turn.at >= event.at && turn.at < armAt))
+    throw new Error("model turn preceded startup activation");
+}
+for (const pid of [events[0].pid, events[2].pid])
+  if (!log.split("\n").some(line => line.includes(`pid=${pid} `) && line.includes("ownership=missing")))
+    throw new Error(`fresh process ${pid} did not exercise late lock acquisition`);
+console.log(`ok - Pi startup events ${JSON.stringify(events)}`);
+JS
+  then
+    fail "real Pi startup lifecycle assertions failed"
+  fi
+  printf 'ok - Pi %s fresh restart and same-process /new auto-arm once without model turns\n' "$PI_VERSION"
+  exit 0
+fi
 
 "$TMUX" -L "$SOCKET" new-session -d -s "$SESSION" -c "$PROJECT" \
   "env FM_HOME='$HOME_DIR' FM_ROOT_OVERRIDE='$PROJECT' FM_POLL=1 FM_SIGNAL_GRACE=0 FM_HEARTBEAT=600 bash -lc 'printf \"%s\\n\" \"\$\$\" > \"\$FM_HOME/state/.lock\"; pi --approve --no-session --no-context-files --no-extensions -e .pi/extensions/fm-calm.ts -e .pi/extensions/fm-primary-turnend-guard.ts -e .pi/extensions/fm-primary-pi-watch.ts --model openai-codex/gpt-5.6-sol --thinking low; rc=\$?; printf \"PI_EXIT=%s\\n\" \"\$rc\"; sleep 300'"

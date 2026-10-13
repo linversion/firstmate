@@ -103,6 +103,7 @@ type SessionGeneration = {
   child: ChildProcess | null;
   retryTimer: ReturnType<typeof setTimeout> | null;
   cleanupTimer: ReturnType<typeof setTimeout> | null;
+  startupTimer: ReturnType<typeof setTimeout> | null;
   retryFailures: number;
   restoring: boolean;
   seq: number;
@@ -518,6 +519,7 @@ function createGeneration(): SessionGeneration {
     child: null,
     retryTimer: null,
     cleanupTimer: null,
+    startupTimer: null,
     retryFailures: 0,
     restoring: false,
     seq: 0,
@@ -540,8 +542,10 @@ function relinquishGeneration(generation: SessionGeneration): void {
   generation.stopping = true;
   if (generation.retryTimer) clearTimeout(generation.retryTimer);
   if (generation.cleanupTimer) clearTimeout(generation.cleanupTimer);
+  if (generation.startupTimer) clearTimeout(generation.startupTimer);
   generation.retryTimer = null;
   generation.cleanupTimer = null;
+  generation.startupTimer = null;
   if (generation.child) retiringGenerations.add(generation);
 }
 
@@ -1078,6 +1082,7 @@ export default function (pi: ExtensionAPI) {
       stdio: ["ignore", "pipe", "pipe"],
     });
     owner.child = armChild;
+    appendExtensionLog(`arm generation=${owner.id} child=${id} ownership=owned pid=${armChild.pid ?? "none"}`);
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -1208,11 +1213,39 @@ export default function (pi: ExtensionAPI) {
     consumeWake(generation, userMessageText(event.message.content));
   });
 
+  // The asynchronous startup runner can claim the fleet lock after session_start.
+  // Retry only that missing-lock window, for at most two minutes, without a model
+  // turn. Every callback owns its captured generation, and startArm retains the
+  // lock and single-flight guards used by the ordinary replacement/repair paths.
+  function activateStartupWatch(owner: SessionGeneration, deadline: number): void {
+    if (!generationIsLive(owner)) {
+      appendExtensionLog(`startup generation=${owner.id} arm-skip=stale-generation`);
+      return;
+    }
+    const ownership = lockOwnership();
+    appendExtensionLog(`startup generation=${owner.id} ownership=${ownership}`);
+    if (ownership === "owned") {
+      const result = activateOwnedWatch(owner);
+      appendExtensionLog(`startup generation=${owner.id} activation=${result.message}`);
+      return;
+    }
+    if (ownership === "other" || Date.now() >= deadline) {
+      appendExtensionLog(`startup generation=${owner.id} arm-skip=${ownership === "other" ? "foreign-lock" : "lock-wait-expired"}`);
+      return;
+    }
+    if (owner.startupTimer) return;
+    const timer = setTimeout(() => {
+      if (owner.startupTimer === timer) owner.startupTimer = null;
+      activateStartupWatch(owner, deadline);
+    }, 250);
+    timer.unref();
+    owner.startupTimer = timer;
+  }
+
   pi.on?.("session_start", async () => {
     if (generation.stopping) generation = createGeneration();
     activateGeneration(generation);
-    if (lockOwnership() !== "owned") return;
-    activateOwnedWatch(generation);
+    activateStartupWatch(generation, Date.now() + 120000);
   });
   pi.on?.("session_shutdown", async (event) => {
     const replacement = event.reason === "reload" || event.reason === "new" || event.reason === "resume" || event.reason === "fork";
@@ -1231,10 +1264,10 @@ export default function (pi: ExtensionAPI) {
   registerFirstmateTool(pi, {
     name: "fm_watch_arm_pi",
     label: "Arm firstmate watcher",
-    description: "Start the first required Pi watcher cycle, or repair one only after a notification says the cycle is missing, failed, or unhealthy. Do not call after ordinary work or ordinary notifications; the Pi extension re-arms automatically. Never run bin/fm-watch-arm.sh through bash.",
-    promptSnippet: "Start the first required Pi watcher cycle or repair a cycle reported missing, failed, or unhealthy; ordinary re-arming is automatic.",
+    description: "Repair a Pi watcher cycle only after a notification says it is missing, failed, or unhealthy. Do not call after ordinary work or ordinary notifications; the Pi extension re-arms automatically. Never run bin/fm-watch-arm.sh through bash.",
+    promptSnippet: "Repair a watcher cycle reported missing, failed, or unhealthy; startup and ordinary re-arming are automatic.",
     promptGuidelines: [
-      "Call fm_watch_arm_pi only for the first required cycle or after a notification says the cycle is missing, failed, or unhealthy. Do not call it after ordinary work, turn completion, or ordinary signal, stale, check, or heartbeat handling because the Pi extension owns re-arming. Never run bin/fm-watch-arm.sh through bash.",
+      "Call fm_watch_arm_pi only after a notification says the cycle is missing, failed, or unhealthy. Do not call it after ordinary work, turn completion, or ordinary signal, stale, check, or heartbeat handling because the Pi extension owns re-arming. Never run bin/fm-watch-arm.sh through bash.",
     ],
     parameters: Type.Object({}),
     renderShell: "self",
