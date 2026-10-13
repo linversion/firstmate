@@ -64,6 +64,42 @@ test_passes_the_command_status_and_output_through() {
   pass "fm_exec_timed passes a command's status and output through unchanged"
 }
 
+# Bash 3.2 has no BASHPID; unset it in a fresh shell to cover that case on
+# newer Bash too, without changing the shell running the rest of the suite.
+test_exec_timed_without_bashpid() {
+  local mode out rc
+  for mode in top-level subshell; do
+    rc=0
+    out=$(bash -c '
+      . "$1/bin/fm-timeout-lib.sh"
+      unset BASHPID
+      PATH=$2
+      if [ "$3" = subshell ]; then
+        (fm_exec_timed 5 1 bash -c "echo started; exit 7")
+      else
+        fm_exec_timed 5 1 bash -c "echo started; exit 7"
+      fi
+    ' _ "$ROOT" "$PERL_ONLY" "$mode" 2>&1) || rc=$?
+    [ "$rc" -eq 7 ] || fail "missing BASHPID lost the $mode command's status (rc=$rc): $out"
+    [ "$out" = started ] || fail "missing BASHPID lost the $mode command's output: $out"
+
+    rc=0
+    out=$(bash -c '
+      . "$1/bin/fm-timeout-lib.sh"
+      unset BASHPID
+      PATH=$2
+      if [ "$3" = subshell ]; then
+        (fm_exec_timed 1 1 bash -c "echo started; exec sleep 300")
+      else
+        fm_exec_timed 1 1 bash -c "echo started; exec sleep 300"
+      fi
+    ' _ "$ROOT" "$PERL_ONLY" "$mode" 2>&1) || rc=$?
+    [ "$rc" -eq 124 ] || fail "missing BASHPID did not enforce the $mode bound (rc=$rc): $out"
+    [ "$out" = started ] || fail "missing BASHPID prevented the $mode bounded command from starting: $out"
+  done
+  pass "fm_exec_timed preserves status and enforces bounds without BASHPID at top level and in subshells"
+}
+
 # A command that honors TERM ends at the bound, long before the grace would
 # have forced it, and is gone afterwards.
 test_term_ends_a_cooperative_command_at_the_bound() {
@@ -109,7 +145,7 @@ test_the_bound_replaces_the_calling_shell() {
     rm -f "$dir/caller" "$dir/parent"
     (
       . "$ROOT/bin/fm-timeout-lib.sh"
-      printf '%s\n' "$BASHPID" > "$dir/caller"
+      printf '%s\n' "${BASHPID:-$(exec /bin/sh -c 'printf "%s\n" "$PPID"')}" > "$dir/caller"
       PATH=$path fm_exec_timed 5 1 bash -c 'echo "$PPID" > "$1"' _ "$dir/parent"
     ) || fail "the bounded probe failed under PATH=$path"
     caller=$(cat "$dir/caller")
@@ -211,7 +247,7 @@ test_an_owner_that_dies_during_startup_ends_the_command() {
   PATH=$PERL_ONLY bash -c '
     . "$1/bin/fm-timeout-lib.sh"
     (
-      echo "$BASHPID" > "$2/watchdog"
+      printf "%s\n" "${BASHPID:-$(exec /bin/sh -c '\''printf "%s\n" "$PPID"'\'')}" > "$2/watchdog"
       while kill -0 "$$" 2>/dev/null; do sleep 0.05; done
       fm_exec_timed 60 1 bash -c "exec sleep 300"
     ) >/dev/null 2>&1 &
@@ -328,6 +364,7 @@ test_run_timed_passes_a_natural_exit_through_a_fired_bound() {
 }
 
 test_passes_the_command_status_and_output_through
+test_exec_timed_without_bashpid
 test_run_timed_reports_the_bound_when_the_wrapper_records_a_signal_death
 test_run_timed_passes_a_natural_exit_through_a_fired_bound
 test_term_ends_a_cooperative_command_at_the_bound
