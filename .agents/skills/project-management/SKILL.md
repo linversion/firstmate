@@ -35,12 +35,12 @@ Do not overwrite or repurpose an existing path.
 
 ## Delivery posture
 
-The registry records the project's standing delivery posture and optional ship-branch prefix, which are the captain's defaults rather than any task's answer.
+The registry records the project's standing delivery posture and optional ship-branch prefix and base branch, which are the captain's defaults rather than any task's answer.
 `AGENTS.md` section 7 owns how each task's concrete mode, yolo, and branch prefix are resolved at intake and passed explicitly to the brief, the spawn, and any promotion.
 Choose that posture when adding or creating the project:
 
 - `no-mistakes` runs the full validation pipeline before a PR.
-- `direct-PR` pushes and opens a PR without the no-mistakes pipeline.
+- `direct-PR` follows the publication contract in `bin/fm-dod-lib.sh` without the no-mistakes pipeline; on the ordinary GitHub path it pushes and opens a PR.
 - `local-only` has no required remote or PR and lands only through the approved local fast-forward path.
 - `no-mistakes-prod-only` is a conditional policy rather than one flat mode: genuinely internal-only tooling, automation, contributor or operator process, and release or submission work ships `direct-PR`, while product-facing, mixed, and uncertain work ships `no-mistakes`.
 
@@ -53,19 +53,27 @@ The optional `+yolo` posture changes merge authority only and does not change th
 Default it off for every project and every posture, and enable it only on the captain's explicit instruction.
 `AGENTS.md` section 7 owns the merge-authority contract.
 
-The optional `forge=` token records which forge the project's remote actually is; its values are `forge=gerrit`, `forge=forgejo`, and `forge=external`.
+The optional `forge=` token records which forge the project's remote actually is; its values are `forge=gerrit`, `forge=forgejo`, `forge=external`, and `forge=push-only`.
+`bin/fm-project-mode.sh`'s header owns the optional `forge=` binding and `bin/fm-dod-lib.sh` owns what it changes for a worker.
 It is orthogonal to the mode and to `+yolo`, so it is never derived from either, and it is never inferred at use time from a remote name, host, port, or push target.
-At add or create intake, run `bin/fm-forge-detect.sh projects/<name>` once the clone exists and propose its answer alongside the posture; the captain's confirmation is what binds it, and the registry token is the durable record of that confirmation.
+At add or create intake, run `bin/fm-forge-detect.sh projects/<name>` once the clone exists and propose its answer alongside the posture; for a confirmed Codeup origin, also propose plain-push delivery with a registered base and the Codeup merge request behavior owned by `bin/fm-project-mode.sh`'s header.
+For confirmed plain-push delivery, register `direct-PR` with the forge binding owned by `bin/fm-project-mode.sh`.
+The captain's confirmation is what binds the forge, and the registry token is the durable record of that confirmation.
 Never register the binding from detection alone, and never re-derive it later from the clone.
 `bin/fm-forge-detect.sh` never proposes `forge=forgejo`, so for a remote that may be Forgejo or Gitea ask the captain and register `forge=forgejo` only on that confirmation.
-A forge composes with `no-mistakes`, `direct-PR`, and `no-mistakes-prod-only` (`forge=external` with `direct-PR` only), and the registry refuses it on `local-only`, which publishes nothing; a Gerrit-hosted project kept local registers `local-only` with no forge token.
-`yolo` is inactive on a `forge=gerrit` project, so never propose `+yolo` alongside it.
+A forge composes with `no-mistakes`, `direct-PR`, and `no-mistakes-prod-only` (`forge=external` and `forge=push-only` with `direct-PR` only), and the registry refuses it on `local-only`, which publishes nothing; a Gerrit-hosted project kept local registers `local-only` with no forge token.
+`yolo` is inactive on `forge=gerrit`, `forge=external`, and `forge=push-only`, so never propose `+yolo` alongside any of them.
 `forge=external` marks a project whose review tool uploads its own snapshot, so workers never push a task branch to its shared origin: it is never detected, so register it only on the captain's confirmation, as `[direct-PR forge=external]` with no `+yolo`, and only once the home has `config/external-review.md` (`docs/configuration.md` "External review tool").
 `bin/fm-project-mode.sh`'s header owns the binding and `bin/fm-dod-lib.sh` owns what it changes for a worker.
 
+Propose the origin's advertised default branch alongside the source, name, and posture; if the captain has named another integration branch, propose that branch after verifying it exists on origin.
+Confirm the exact base branch with the captain before registration rather than inferring it from the remote or a branch name.
+Record the confirmed override with the optional registry token described by `bin/fm-project-mode.sh`'s header; `bin/fm-project-base-lib.sh` owns its Git resolution and refusal behavior.
+After cloning, check out the confirmed base in the project clone when that branch is clean and available, so fleet sync can advance it without treating the remote's default branch as an off-base worktree.
+
 ## Add or clone an existing project
 
-Confirm the source URL, local project name, delivery posture, and autonomy posture, stating the resolved default for each rather than asking the captain to invent one.
+Confirm the source URL, local project name, base branch, delivery posture, and autonomy posture, stating the proposed values rather than asking the captain to invent them.
 Clone into `projects/<name>` and add the registry entry only after the destination is known to be unused.
 A `no-mistakes` or `no-mistakes-prod-only` project must have an `origin` remote and must complete the initialization procedure below, because a conditional policy's product-facing work runs the pipeline while its internal-only work still takes the direct PR.
 A `direct-PR` project needs an `origin` remote but skips no-mistakes initialization.

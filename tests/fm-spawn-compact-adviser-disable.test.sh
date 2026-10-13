@@ -317,6 +317,7 @@ test_relaunch_rebuilds_the_switch() {
       echo "harness=codex"
       echo "kind=ship"
       echo "mode=no-mistakes"
+      echo "forge=push-only"
       echo "yolo=off"
       echo "tasktmp=$dir/tasktmp"
       echo "model=default"
@@ -330,6 +331,8 @@ test_relaunch_rebuilds_the_switch() {
       "$CONTROL" "$id" relaunch --note 'replacement continues the same task' 2>&1)
     status=$?
     expect_code 0 "$status" "relaunch with allowlist=$setting should succeed: $out"
+    ! grep -q '^forge=' "$home/state/$id.meta" \
+      || fail "relaunch with allowlist=$setting retained an obsolete forge binding"
 
     grep -qx 'export COMPACT_ADVISER_DISABLE=1' "$dir/fake/keys" \
       || fail "relaunch with allowlist=$setting did not re-export the compact-adviser switch into the pane"

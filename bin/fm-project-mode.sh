@@ -7,8 +7,10 @@
 # is absent, so every existing installation keeps its current "fm/<task-id>"
 # branch names unchanged.
 # With --forge it prints one word instead: the project's registered forge,
-# none|gerrit|forgejo|external. The forge is asked for explicitly, so the
+# none|gerrit|forgejo|external|push-only. The forge is asked for explicitly, so the
 # default output stays the same two words for every project, bound or not.
+# --base-branch prints the optional registered base branch, or an empty line
+# when absent. bin/fm-project-base-lib.sh owns resolution against Git refs.
 #
 # MECHANICAL CONSUMERS ONLY. This answers "what posture did the captain register
 # for this project", never "how does this task ship". A task's delivery mode,
@@ -30,8 +32,9 @@
 #   - <name> [<mode> forge=gerrit] - <desc> (added <date>)           -> <mode> off, --forge gerrit
 #   - <name> [<mode> forge=forgejo] - <desc> (added <date>)          -> <mode> <yolo>, --forge forgejo
 #   - <name> [direct-PR forge=external] - <desc> (added <date>)      -> direct-PR off, --forge external
+#   - <name> [<mode> base=<branch>] - <desc> (added <date>)         -> <mode> off, --base-branch <branch>
 #   <name> may contain spaces; it ends at the literal " [" or " - " that follows it.
-#   Bracket tokens are order-independent: +yolo, branch=<prefix>, and forge=<value>
+#   Bracket tokens are order-independent: +yolo, branch=<prefix>, base=<branch>, and forge=<value>
 #   are recognized by their own shape wherever they appear, and whichever token is
 #   left over is the mode. <prefix> must not contain a space; an empty override
 #   ("branch=") resolves to "" for a bare "<task-id>" ship branch instead of the
@@ -39,7 +42,7 @@
 #
 # Registered modes:
 #   no-mistakes            full pipeline -> PR -> configured merge authority (default)
-#   direct-PR              push + PR via gh-axi, no pipeline
+#   direct-PR              publish per fm-dod-lib.sh, no pipeline
 #   local-only             local branch, no remote/PR, guarded local merge
 #   no-mistakes-prod-only  a conditional policy, not a task mode: firstmate
 #                          classifies each task's surface at intake (the
@@ -68,6 +71,8 @@
 #   each changes for a worker in each publishing mode;
 #   docs/forgejo-tea-integration.md holds the tea evidence and
 #   docs/external-review-forge.md the external design).
+#   `push-only` publishes one Codeup merge request against a registered base
+#   with direct-PR; review and landing remain human actions.
 #   The binding is EXPLICIT because a provider family must never be guessed;
 #   bin/fm-forge-detect.sh proposes gerrit from a protocol fact at project-add
 #   intake, forgejo has no such fact and is proposed from the captain's own
@@ -80,6 +85,8 @@
 #   advances it with content the server has never seen
 #   (docs/gerrit-forge-integration.md section 3).
 #
+# A registered `forge=push-only` project reports yolo=off with a stderr refusal
+# when +yolo is registered, because remote landing remains a human action.
 # A registered `forge=gerrit` project reports yolo=off with an explicit stderr
 # refusal, on the captain's decision of 2026-09-15: a Gerrit Code-Review+2 is a
 # positive attributed claim that a named human approved, read by colleagues and
@@ -89,16 +96,16 @@
 #
 # --raw prints the registered mode annotation unmapped, so a caller that must
 # tell a conditional policy apart from a flat mode sees "no-mistakes-prod-only"
-# itself. Not combined with --branch-prefix, which has no conditional-policy leg.
+# itself. The branch-prefix and base-branch queries are separate.
 #
 # An unknown/missing project or unknown mode falls back to "no-mistakes off" (or
 # "fm/" under --branch-prefix) and warns to stderr, so a typo never silently
 # drops the gate. Other annotation tokens are ignored, as they always were, keyed
-# ones included: a `<key>=<value>` token whose key is neither exactly `forge` nor
-# `branch` resolves as it did before the forge existed, and in the mode slot it
+# ones included: a `<key>=<value>` token whose key is not a recognized registry
+# key resolves as it did before the forge existed, and in the mode slot it
 # is read as an unknown mode. A key one or two edits from `forge` (such as
 # `forg=` or `Forge=`) is still ignored, with one stderr warning naming the token
-# and the forge=gerrit, forge=forgejo, and forge=external spellings. The one
+# and the forge=gerrit, forge=forgejo, forge=external, and forge=push-only spellings. The one
 # refusal is a malformed forge binding - a `forge=` token whose value is empty or outside the
 # closed set - which is REFUSED in the default and --forge output forms: nothing
 # on stdout, exit status 3, the token named. Resolving it to "no registered
@@ -108,8 +115,10 @@
 # that check: it answers only the registered prefix, and a prefix is orthogonal
 # to the forge binding, so it prints even when the forge token is malformed;
 # every path that reads the forge binding (default, --forge, and spawn's
-# forge-agreement check) still refuses.
-# Usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] <project-name>
+# forge-agreement check) still refuses. --base-branch refuses an empty or invalid
+# branch value, and otherwise prints the confirmed override without a Git probe.
+# All query forms refuse a missing or invalid base for forge=push-only.
+# Usage: fm-project-mode.sh [--raw|--branch-prefix|--base-branch|--forge] <project-name>
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -120,16 +129,20 @@ REG="$DATA/projects.md"
 RAW=0
 BRANCH_PREFIX_QUERY=0
 WANT_FORGE=0
+BASE_QUERY=0
 case "${1:-}" in
   --raw) RAW=1; shift ;;
   --branch-prefix) BRANCH_PREFIX_QUERY=1; shift ;;
   --forge) WANT_FORGE=1; shift ;;
+  --base-branch) BASE_QUERY=1; shift ;;
 esac
-NAME=${1:?usage: fm-project-mode.sh [--raw|--branch-prefix|--forge] <project-name>}
+NAME=${1:?usage: fm-project-mode.sh [--raw|--branch-prefix|--base-branch|--forge] <project-name>}
 
 if [ ! -f "$REG" ]; then
   echo "warn: no registry at $REG; defaulting $NAME to no-mistakes off" >&2
-  if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
+  if [ "$BASE_QUERY" -eq 1 ]; then
+    echo
+  elif [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
     echo "fm/"
   elif [ "$WANT_FORGE" -eq 1 ]; then echo none; else echo "no-mistakes off"; fi
   exit 0
@@ -165,14 +178,14 @@ parsed=$(awk -v n="$NAME" '
     if (substr($0, 1, plen) != prefix) next
     after = substr($0, plen + 1);
     if (after != "" && substr(after, 1, 2) != " [" && substr(after, 1, 3) != " - ") next
-    mode="no-mistakes"; yolo="off"; branch="fm/"; forge="none";
+    mode="no-mistakes"; yolo="off"; branch="fm/"; forge="none"; base="none";
     if (substr(after, 1, 2) == " [") {
       s="";
       nk = split(after, rest, " ");
       for (i=1; i<=nk; i++) { s = s (s==""?"":" ") rest[i]; if (rest[i] ~ /\]$/) break }
       gsub(/^\[|\]$/, "", s);           # strip the surrounding brackets
       k = split(s, a, " ");
-      # Tokens are order-independent: +yolo, branch=<prefix>, and forge=<value>
+      # Tokens are order-independent: +yolo, branch=<prefix>, base=<branch>, and forge=<value>
       # are recognized by their own shape wherever they appear, keyed tokens
       # that are neither are ignored (with a near-miss warning for the forge
       # spelling), and the first token left over is the mode.
@@ -180,6 +193,7 @@ parsed=$(awk -v n="$NAME" '
       for (j=1; j<=k; j++) {
         if (a[j]=="+yolo") { yolo="on"; continue }
         if (a[j] ~ /^branch=/) { branch = substr(a[j], 8); continue }
+        if (a[j] ~ /^base=/) { base = a[j]; continue }
         if (a[j] ~ /^forge=/) { forge = a[j]; continue }
         if (a[j] ~ /^[^=]+=/) {
           key = substr(a[j], 1, index(a[j], "=") - 1);
@@ -193,13 +207,15 @@ parsed=$(awk -v n="$NAME" '
     }
     # branch is printed LAST: an empty branch= override must survive as an
     # empty final field, which only holds when nothing follows it.
-    print "posture", mode, yolo, forge, branch; exit
+    print "posture", mode, yolo, forge, base, branch; exit
   }
 ' "$REG")
 
 if [ -z "$parsed" ]; then
   echo "warn: project \"$NAME\" not in registry; defaulting to no-mistakes off" >&2
-  if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
+  if [ "$BASE_QUERY" -eq 1 ]; then
+    echo
+  elif [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
     echo "fm/"
   elif [ "$WANT_FORGE" -eq 1 ]; then echo none; else echo "no-mistakes off"; fi
   exit 0
@@ -208,14 +224,14 @@ fi
 posture=
 while IFS=' ' read -r kind rest; do
   case "$kind" in
-    near) echo "warn: ignoring \"$rest\" registered for $NAME in $REG; it is not a forge binding, and the forge binding is spelled forge=gerrit, forge=forgejo, or forge=external" >&2 ;;
+    near) echo "warn: ignoring \"$rest\" registered for $NAME in $REG; it is not a forge binding, and the forge binding is spelled forge=gerrit, forge=forgejo, forge=external, or forge=push-only" >&2 ;;
     posture) posture=$rest ;;
   esac
 done <<EOF
 $parsed
 EOF
-while IFS=' ' read -r m y f b; do
-  mode=$m; yolo=$y; rest_forge=$f; branch=$b
+while IFS=' ' read -r m y f base_token b; do
+  mode=$m; yolo=$y; rest_forge=$f; branch=$b; base=$base_token
 done <<EOF
 $posture
 EOF
@@ -225,22 +241,50 @@ case "$mode" in
   *) echo "warn: unknown mode \"$mode\" for $NAME; defaulting to no-mistakes off" >&2; mode=no-mistakes; yolo=off; branch=fm/ ;;
 esac
 case "$yolo" in on|off) ;; *) yolo=off ;; esac
+if [ "$forge" = forge=push-only ]; then
+  if [ "$base" = none ]; then
+    echo "refused: forge=push-only for $NAME requires a registered base= branch in $REG" >&2
+    exit 3
+  fi
+  push_base=${base#base=}
+  if [ -z "$push_base" ] || ! git check-ref-format --branch "$push_base" >/dev/null 2>&1; then
+    echo "refused: invalid base branch '$push_base' registered for forge=push-only project $NAME in $REG" >&2
+    exit 3
+  fi
+fi
+if [ "$BASE_QUERY" -eq 1 ]; then
+  case "$base" in
+    none) echo ;;
+    base=*)
+      base=${base#base=}
+      if [ -z "$base" ] || ! git check-ref-format --branch "$base" >/dev/null 2>&1; then
+        echo "refused: invalid base branch '$base' registered for $NAME in $REG" >&2
+        exit 3
+      fi
+      echo "$base" ;;
+  esac
+  exit 0
+fi
 if [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
   echo "$branch"
   exit 0
 fi
 
 case "$forge" in
-  none|forge=gerrit|forge=forgejo|forge=external) forge=${forge#forge=} ;;
+  none|forge=gerrit|forge=forgejo|forge=external|forge=push-only) forge=${forge#forge=} ;;
   forge=)
-    echo "refused: empty forge binding \"forge=\" registered for $NAME in $REG; the accepted values are forge=gerrit, forge=forgejo, and forge=external, or no forge token at all for a forge whose pull requests no-mistakes already drives; correct the registry entry" >&2
+    echo "refused: empty forge binding \"forge=\" registered for $NAME in $REG; the accepted values are forge=gerrit, forge=forgejo, forge=external, and forge=push-only, or no forge token at all for a forge whose pull requests no-mistakes already drives; correct the registry entry" >&2
     exit 3 ;;
   *)
-    echo "refused: unknown forge \"${forge#forge=}\" registered for $NAME in $REG; the accepted values are forge=gerrit, forge=forgejo, and forge=external, or no forge token at all for a forge whose pull requests no-mistakes already drives; correct the registry entry" >&2
+    echo "refused: unknown forge \"${forge#forge=}\" registered for $NAME in $REG; the accepted values are forge=gerrit, forge=forgejo, forge=external, and forge=push-only, or no forge token at all for a forge whose pull requests no-mistakes already drives; correct the registry entry" >&2
     exit 3 ;;
 esac
 if [ "$forge" != none ] && [ "$mode" = local-only ]; then
   echo "refused: $NAME is registered local-only with forge=$forge in $REG; local-only publishes nothing, so a forge has no meaning there, and its landing would fast-forward local main with content the review server has never seen; register no-mistakes or direct-PR to publish through the forge, or drop the forge token to keep the project local" >&2
+  exit 3
+fi
+if [ "$forge" = push-only ] && [ "$mode" != direct-PR ]; then
+  echo "refused: forge=push-only for $NAME requires direct-PR mode in $REG" >&2
   exit 3
 fi
 if [ "$WANT_FORGE" -eq 1 ]; then
@@ -253,6 +297,10 @@ if [ "$forge" = gerrit ] && [ "$yolo" = on ]; then
 fi
 if [ "$forge" = external ] && [ "$yolo" = on ]; then
   echo "refused: +yolo is registered for $NAME but yolo is inactive for forge=external, so this reports yolo=off: firstmate can neither observe nor perform the review tool's approval or merge, so every review escalates" >&2
+  yolo=off
+fi
+if [ "$forge" = push-only ] && [ "$yolo" = on ]; then
+  echo "refused: +yolo is registered for $NAME but forge=push-only leaves remote landing to a human, so this reports yolo=off" >&2
   yolo=off
 fi
 # A conditional policy is not a task mode. Mechanical callers get its most

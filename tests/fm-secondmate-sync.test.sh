@@ -162,6 +162,21 @@ test_ff_updated() {
   pass "T1 updated: a behind home fast-forwards to the primary's local HEAD"
 }
 
+test_project_base_name_collision_does_not_redirect_self_sync() {
+  local w first base
+  w=$(new_world base-name-collision)
+  first=$(head_of "$w/main")
+  git -C "$w/main" worktree add -q --detach "$w/sm" "$first"
+  printf '%s\n' '- main [no-mistakes base=develop] - fixture' '- sm [no-mistakes base=develop] - fixture' > "$w/home/data/projects.md"
+  bump_primary "$w" instr
+  base=$(FM_HOME="$w/home" primary_head_commit "$w/main") || fail 'project registration redirected the primary commit'
+  [ "$base" = "$(head_of "$w/main")" ] || fail 'primary commit did not follow main'
+  FM_HOME="$w/home" run_ff "$w/sm" "$base"
+  [ "$FF_STATUS" = updated ] || fail "project registration redirected secondmate sync: $FF_OUT"
+  [ "$(head_of "$w/sm")" = "$base" ] || fail 'secondmate did not reach the primary commit'
+  pass 'project names cannot redirect Firstmate and secondmate self-sync'
+}
+
 # --- T2: current - already on the primary's HEAD is a no-op (no nudge) -------
 test_ff_current() {
   local w base
@@ -1427,6 +1442,7 @@ test_remote_launch_does_not_retarget_host_copy() {
 }
 
 test_ff_updated
+test_project_base_name_collision_does_not_redirect_self_sync
 test_ff_current
 test_ff_dirty
 test_scratchpad2_does_not_dirty_home
