@@ -162,10 +162,6 @@ refuse_impossible_forge_posture() {
     echo "error: promotion is refused for forge=external: a scout launches without the push guard and the task record that keep task branches off the shared origin; spawn a fresh ship task with bin/fm-brief.sh --forge external instead" >&2
     return 1
   fi
-  if [ "$FORGE" = push-only ] && [ "$YOLO" = on ]; then
-    echo "error: --yolo on is refused for forge=push-only: remote landing remains a human action" >&2
-    return 1
-  fi
   return 0
 }
 refuse_impossible_forge_posture || exit 1

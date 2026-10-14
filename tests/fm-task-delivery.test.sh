@@ -1778,7 +1778,7 @@ test_registered_base_and_push_only_contract() {
   assert_no_grep 'gh-axi pr create' "$brief" "push-only brief asked for GitHub PR creation"
   printf '%s\n' '- project [direct-PR forge=push-only base=develop +yolo] - fixture' > "$home/data/projects.md"
   out=$(FM_HOME="$home" "$PROJECT_MODE" project 2>/dev/null)
-  [ "$out" = 'direct-PR off' ] || fail "push-only allowed standing autonomous merge authority"
+  [ "$out" = 'direct-PR on' ] || fail "Codeup +yolo did not enable standing merge authority"
   printf '%s\n' '- project [no-mistakes forge=push-only base=develop] - fixture' > "$home/data/projects.md"
   if out=$(FM_HOME="$home" "$PROJECT_MODE" project 2>&1); then
     fail "push-only forge accepted the no-mistakes PR pipeline"
@@ -2090,6 +2090,119 @@ test_task_base_precedence_and_codeup_target_refusal() {
   pass 'explicit bases survive promotion and Codeup refuses an unregistered target'
 }
 
+# All Codeup merge calls use a local bare origin and a CLI fixture. No API writes.
+test_codeup_yolo_merge_gate() (
+  local case_dir home wt origin fakebin meta head url out receipt before
+  case_dir="$TMP_ROOT/codeup-yolo"
+  home="$case_dir/home"
+  wt="$case_dir/project"
+  origin="$case_dir/origin.git"
+  fakebin="$case_dir/bin"
+  mkdir -p "$home/data" "$home/state" "$fakebin"
+  git init -q -b develop "$wt"
+  git -C "$wt" -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m base
+  git init -q --bare "$origin"
+  git -C "$wt" remote add origin "$origin"
+  git -C "$wt" checkout -q -b contrib/task
+  git -C "$wt" -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m feature
+  git -C "$wt" push -q origin contrib/task
+  git -C "$wt" remote set-url origin 'git@codeup.aliyun.com:org/project.git'
+  git -C "$wt" config "url.$origin.insteadOf" 'git@codeup.aliyun.com:org/project.git'
+  head=$(git -C "$wt" rev-parse HEAD)
+  url=https://codeup.aliyun.com/org/project/change/7
+  meta="$home/state/task.meta"
+  printf 'worktree=%s\nproject=%s\nbranch=contrib/task\nbase_branch=develop\nkind=ship\nmode=direct-PR\nforge=push-only\nyolo=off\n' "$wt" "$wt" > "$meta"
+  printf '%s\n' '- project [direct-PR base=develop forge=push-only +yolo] - fixture' > "$home/data/projects.md"
+  export FM_HOME="$home" PATH="$fakebin:$PATH" ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture
+  export FM_TEST_CODEUP_DIR="$case_dir" FM_TEST_CODEUP_HEAD="$head" FM_TEST_CODEUP_URL="$url"
+  printf '%s\n' TO_BE_MERGED > "$case_dir/state"
+  : > "$case_dir/calls"
+  cat > "$fakebin/aliyun" <<'MOCK'
+#!/usr/bin/env bash
+[ "$1" = devops ] || exit 1
+shift
+printf '%s\n' "$*" >> "$FM_TEST_CODEUP_DIR/calls"
+case "$1" in
+  codeup-get-repository) printf '{"id":42,"pathWithNamespace":"org/project"}\n' ;;
+  codeup-get-change-request)
+    printf '{"localId":7,"projectId":42,"sourceProjectId":42,"targetProjectId":42,"sourceBranch":"contrib/task","targetBranch":"%s","status":"%s","detailUrl":"%s","allRequirementsPass":%s,"conflictCheckStatus":"%s"}\n' \
+      "${FM_TEST_CODEUP_TARGET:-develop}" "$(cat "$FM_TEST_CODEUP_DIR/state")" "$FM_TEST_CODEUP_URL" "${FM_TEST_CODEUP_REQUIREMENTS:-true}" "${FM_TEST_CODEUP_CONFLICT:-NO_CONFLICT}" ;;
+  codeup-list-change-request-patch-sets)
+    printf '[{"relatedMergeItemType":"MERGE_SOURCE","versionNo":1,"commitId":"%s","patchSetBizId":"patch-1"}]\n' "${FM_TEST_CODEUP_PATCH_HEAD:-$FM_TEST_CODEUP_HEAD}" ;;
+  codeup-list-change-request-ci-check-list)
+    printf '{"latest":%s,"status":"%s","commitStatuses":[{"sha":"%s","state":"success"}]}\n' "${FM_TEST_CODEUP_LATEST:-true}" "${FM_TEST_CODEUP_CI:-PASS}" "$FM_TEST_CODEUP_HEAD" ;;
+  codeup-get-branch) printf '{"name":"contrib/task","commit":{"id":"%s"}}\n' "${FM_TEST_CODEUP_BRANCH_HEAD:-$FM_TEST_CODEUP_HEAD}" ;;
+  codeup-merge-change-request)
+    printf '%s\n' "${FM_TEST_CODEUP_AFTER:-MERGED}" > "$FM_TEST_CODEUP_DIR/state"
+    printf '{"success":true}\n'
+    exit "${FM_TEST_CODEUP_MERGE_RC:-0}" ;;
+  *) exit 1 ;;
+esac
+MOCK
+  chmod +x "$fakebin/aliyun"
+  # Produce the real acceptance receipt through its public done gate.
+  out=$(bash -c '. "$1/bin/fm-dod-lib.sh"; fm_dod_accept_ship_done ship direct-PR "$2" "$2" "done: Codeup MR 7 $3" "$FM_HOME/state" task "$4"' _ "$ROOT" "$wt" "$url" "$meta") || fail "Codeup receipt fixture was refused: $out"
+  receipt=$(cat "$home/state/task.codeup-accepted")
+  merge_codeup() { "$ROOT/bin/fm-codeup-change-request.sh" merge "$wt" contrib/task develop 7 "$url" task; }
+  if out=$(merge_codeup 2>&1); then fail 'yolo off allowed machine merge'; fi
+  assert_contains "$out" 'yolo=on' 'yolo refusal did not identify authority'
+  if rg -q '^codeup-merge-change-request ' "$case_dir/calls"; then fail 'yolo-off refusal called merge API'; fi
+  sed 's/yolo=off/yolo=on/' "$meta" > "$case_dir/meta"
+  mv "$case_dir/meta" "$meta"
+  for refusal in receipt local-head patch-head branch-head requirements conflict ci latest wrong-target closed hold; do
+    printf '%s\n' TO_BE_MERGED > "$case_dir/state"
+    : > "$case_dir/calls"
+    printf '%s\n' "$receipt" > "$home/state/task.codeup-accepted"
+    case "$refusal" in
+      receipt) printf 'invented\n' > "$home/state/task.codeup-accepted" ;;
+      local-head) git -C "$wt" -c user.name=Test -c user.email=test@example.invalid commit -q --allow-empty -m later ;;
+      patch-head) export FM_TEST_CODEUP_PATCH_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+      branch-head) export FM_TEST_CODEUP_BRANCH_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;;
+      requirements) export FM_TEST_CODEUP_REQUIREMENTS=false ;;
+      conflict) export FM_TEST_CODEUP_CONFLICT=HAS_CONFLICT ;;
+      ci) export FM_TEST_CODEUP_CI=FAIL ;;
+      latest) export FM_TEST_CODEUP_LATEST=false ;;
+      wrong-target) export FM_TEST_CODEUP_TARGET=main ;;
+      closed) printf '%s\n' CLOSED > "$case_dir/state" ;;
+      hold)
+        fm_test_tasks_toml "$home/.tasks.toml"
+        (cd "$home" && tasks-axi add task 'Codeup work' --kind ship --repo project >/dev/null) || fail 'could not create hold task'
+        "$ROOT/bin/fm-captain-hold.sh" hold task --reason 'waiting for approval' >/dev/null || fail 'could not create captain hold fixture'
+        ;;
+    esac
+    if out=$(merge_codeup 2>&1); then fail "Codeup accepted $refusal: $out"; fi
+    if rg -q '^codeup-merge-change-request ' "$case_dir/calls"; then fail "Codeup $refusal refusal called merge API"; fi
+    case "$refusal" in
+      local-head) git -C "$wt" checkout -q --detach "$head" ;;
+      hold)
+        printf 'proceed\n' > "$case_dir/answer"
+        "$ROOT/bin/fm-captain-hold.sh" answer task --release --decision-file "$case_dir/answer" >/dev/null || fail 'could not release captain hold fixture'
+        ;;
+    esac
+    # The branch gate intentionally refuses an advanced named branch too.
+    if [ "$refusal" = local-head ]; then
+      git -C "$wt" branch -f contrib/task "$head"
+      git -C "$wt" checkout -q contrib/task
+    fi
+    unset FM_TEST_CODEUP_PATCH_HEAD FM_TEST_CODEUP_BRANCH_HEAD FM_TEST_CODEUP_REQUIREMENTS FM_TEST_CODEUP_CONFLICT FM_TEST_CODEUP_CI FM_TEST_CODEUP_LATEST FM_TEST_CODEUP_TARGET
+  done
+  for after in TO_BE_MERGED CLOSED; do
+    printf '%s\n' TO_BE_MERGED > "$case_dir/state"
+    if out=$(FM_TEST_CODEUP_AFTER="$after" merge_codeup 2>&1); then fail "Codeup trusted API exit 0 with state $after"; fi
+    assert_contains "$out" 'did not confirm' 'unproved merge refusal was unclear'
+    [ ! -e "$home/state/task.pr-poll-merge-notified" ] || fail 'unproved merge recorded a landed outcome'
+  done
+  printf '%s\n' TO_BE_MERGED > "$case_dir/state"
+  out=$(FM_TEST_CODEUP_MERGE_RC=1 "$ROOT/bin/fm-pr-merge.sh" task "$url" 2>&1) || fail "MERGED readback was not authoritative after CLI failure: $out"
+  assert_grep 'codeup-merge-change-request --repository-id 42 --local-id 7 --merge-type no-fast-forward --remove-source-branch false' "$case_dir/calls" 'Codeup merge did not use verified identity or preserve source branch'
+  [ -e "$home/state/task.pr-poll-merge-notified" ] || fail 'confirmed Codeup merge did not record standard outcome'
+  [ ! -e "$home/state/task.pr-poll" ] || fail 'Codeup armed unsupported PR monitoring'
+  before=$(rg -c '^codeup-merge-change-request ' "$case_dir/calls")
+  out=$(merge_codeup 2>&1) || fail "already-merged Codeup retry failed: $out"
+  [ "$(rg -c '^codeup-merge-change-request ' "$case_dir/calls")" = "$before" ] || fail 'already-merged retry called merge API again'
+  pass 'Codeup yolo merge binds the acceptance head, rejects unsafe states, and proves MERGED before recording landing'
+)
+
 test_registered_base_reaches_worker_instructions
 test_task_base_precedence_and_codeup_target_refusal
 test_ship_spawn_requires_a_valid_delivery_contract
@@ -2122,4 +2235,5 @@ test_spawn_and_promote_require_filled_task_subsections
 test_project_mode_resolves_branch_prefix
 test_registered_base_and_push_only_contract
 test_codeup_publish_and_live_done_gate
+test_codeup_yolo_merge_gate || exit 1
 echo "# all fm-task-delivery tests passed"

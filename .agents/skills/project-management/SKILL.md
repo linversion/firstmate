@@ -62,9 +62,10 @@ The captain's confirmation is what binds the forge, and the registry token is th
 Never register the binding from detection alone, and never re-derive it later from the clone.
 `bin/fm-forge-detect.sh` never proposes `forge=forgejo`, so for a remote that may be Forgejo or Gitea ask the captain and register `forge=forgejo` only on that confirmation.
 A forge composes with `no-mistakes`, `direct-PR`, and `no-mistakes-prod-only` (`forge=external` and `forge=push-only` with `direct-PR` only), and the registry refuses it on `local-only`, which publishes nothing; a Gerrit-hosted project kept local registers `local-only` with no forge token.
-`yolo` is inactive on `forge=gerrit`, `forge=external`, and `forge=push-only`, so never propose `+yolo` alongside any of them.
+`yolo` is inactive on `forge=gerrit` and `forge=external`, so never propose `+yolo` alongside either.
 `forge=external` marks a project whose review tool uploads its own snapshot, so workers never push a task branch to its shared origin: it is never detected, so register it only on the captain's confirmation, as `[direct-PR forge=external]` with no `+yolo`, and only once the home has `config/external-review.md` (`docs/configuration.md` "External review tool").
 `bin/fm-project-mode.sh`'s header owns the binding and `bin/fm-dod-lib.sh` owns what it changes for a worker.
+For `forge=push-only`, Codeup machine landing follows the merge gate in `bin/fm-pr-merge.sh`.
 
 Propose the origin's advertised default branch alongside the source, name, and posture; if the captain has named another integration branch, propose that branch after verifying it exists on origin.
 Confirm the exact base branch with the captain before registration rather than inferring it from the remote or a branch name.
