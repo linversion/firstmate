@@ -1497,11 +1497,20 @@ It uses the same live secondmate discovery and propagation helper as bootstrap; 
 A project with no `forge=` token is served by the GitHub tooling, `gh` and `gh-axi`, exactly as before the token existed, and the token changes nothing for existing entries.
 A remote-backed project on a Forgejo or Gitea server is registered with `forge=forgejo`, one value of the same closed `forge=` binding that Gerrit uses; `bin/fm-project-mode.sh`'s header owns its grammar, values, and refusals, and `bin/fm-project-mode.sh --forge <name>` reads it back.
 Firstmate passes the binding to `bin/fm-brief.sh --forge` at intake the same way it passes `--mode`, and `bin/fm-spawn.sh` refuses a brief whose forge disagrees with the registry; on `forgejo` the generated ship brief names `tea` instead of `gh-axi`.
-The URL-driven provider dispatch in [`bin/fm-pr-lib.sh`](../bin/fm-pr-lib.sh) recognizes a GitHub, GitLab, Gerrit, or Forgejo PR/MR/change URL once one exists, regardless of this token.
+The URL-driven provider dispatch in [`bin/fm-pr-lib.sh`](../bin/fm-pr-lib.sh) recognizes a GitHub, GitLab, Gerrit, Forgejo, or Codeup PR/MR/change URL once one exists, regardless of this token.
 
 A Forgejo (or Gitea) project needs `tea` on `PATH` plus a `tea login` registered for that project's host (`tea login add`); the login is matched to a PR's host automatically, never configured per project.
 A GitLab project needs no forge token, only `glab` on `PATH`, authenticated via `glab auth login`.
 [`docs/gitlab-merge-watch.md`](gitlab-merge-watch.md) and [`docs/forgejo-tea-integration.md`](forgejo-tea-integration.md) hold the empirically verified CLI behavior each provider's watch and merge path depends on.
+
+### Codeup delivery
+
+Register Codeup projects with `direct-PR`, `forge=push-only`, and their landing branch as `base=<branch>`.
+Adding `+yolo` grants the same routine merge authority as other supported forges; without it, each MR waits for human approval and can be merged in the Codeup web UI.
+Workers publish for review and stop; machine landing belongs to firstmate's [`fm-pr-merge.sh`](../bin/fm-pr-merge.sh) gate.
+The [`Codeup adapter`](../bin/fm-codeup-change-request.sh) header owns the merge command, receipt and live-check requirements, merge method, confirmed-state rule, and the concurrent-push limitation of Codeup's API.
+Codeup retains its acceptance receipt and does not arm the PR polling adapter.
+The isolated regressions are in [`fm-task-delivery.test.sh`](../tests/fm-task-delivery.test.sh).
 
 ## Watched tool updates (config/watched-tools.json)
 

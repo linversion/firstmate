@@ -3560,10 +3560,6 @@ if [ "$KIND" = ship ]; then
       ;;
     esac
   fi
-  if [ "$STANDING_FORGE" = push-only ] && [ "$YOLO" = on ]; then
-    echo "error: --yolo on is refused for $ID: forge=push-only leaves remote landing to a human" >&2
-    exit 1
-  fi
   # The registry holds the captain's standing posture, so dropping below it is
   # allowed (a current explicit captain instruction wins) but never silent. An
   # unregistered project resolves to the same no-mistakes standing default, which

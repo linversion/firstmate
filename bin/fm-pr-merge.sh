@@ -8,7 +8,9 @@
 # pull request is addressed through tea by the derived owner and repository
 # plus a "tea login" resolved fresh from the parsed host on every run. A Gerrit
 # change is refused outright: that adapter is read-only, and the refusal at the
-# parse below owns why.
+# parse below owns why. Codeup routes to the receipt-bound adapter, requires
+# task yolo=on, accepts no overrides, and shares these lifecycle, hold, away,
+# and outcome guards. Its adapter header owns head/CI checks and API limits.
 #
 # Merge method on GitHub defaults to --squash when the caller passes none of
 # --squash, --merge, --rebase, or --method after the optional -- separator.
@@ -168,6 +170,9 @@
 # explicit captain instruction and never skips the live green check, the
 # away-record read, or a captain hold.
 #
+# The Codeup adapter forwards --codeup-worktree, --codeup-branch, --codeup-base,
+# and --codeup-id before the optional separator as identity assertions only;
+# direct callers need just the task ID and canonical Codeup MR URL.
 # Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [--allow-missing <check-name>] [-- <extra forge merge args>]
 #
 # On GitLab, this script confirms the MR is actually merged before reporting it;
@@ -229,8 +234,22 @@ shift 2
 ATTENDED_OVERRIDE=false
 ALLOW_RED=()
 ALLOW_MISSING=()
+CODEUP_EXPECT_WT=
+CODEUP_EXPECT_BRANCH=
+CODEUP_EXPECT_BASE=
+CODEUP_EXPECT_ID=
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --codeup-worktree|--codeup-branch|--codeup-base|--codeup-id)
+      [ "$PROVIDER" = codeup ] && [ -n "${2:-}" ] || { echo 'error: invalid Codeup merge identity argument' >&2; exit 2; }
+      case "$1" in
+        --codeup-worktree) CODEUP_EXPECT_WT=$2 ;;
+        --codeup-branch) CODEUP_EXPECT_BRANCH=$2 ;;
+        --codeup-base) CODEUP_EXPECT_BASE=$2 ;;
+        --codeup-id) CODEUP_EXPECT_ID=$2 ;;
+      esac
+      shift 2
+      ;;
     --attended-override)
       ATTENDED_OVERRIDE=true
       shift
@@ -292,6 +311,11 @@ if [ "${#ALLOW_MISSING[@]}" -gt 0 ]; then
       exit 2
       ;;
   esac
+fi
+
+if [ "$PROVIDER" = codeup ] && { [ "$#" -gt 0 ] || [ "${#ALLOW_RED[@]}" -gt 0 ] || [ "${#ALLOW_MISSING[@]}" -gt 0 ] || [ "$ATTENDED_OVERRIDE" = true ]; }; then
+  echo 'error: Codeup merge accepts no forge flags or check waivers; yolo must be on' >&2
+  exit 2
 fi
 
 caller_has_merge_method() {
@@ -1312,7 +1336,49 @@ METHODS
   fi
 }
 
+# Codeup deliberately keeps its acceptance receipt instead of arming the PR
+# monitor. Both entrypoints use this same task/receipt gate under the control
+# lock, and use the common captain-hold and away-authority guards below.
+CODEUP_WT=
+CODEUP_BRANCH=
+CODEUP_BASE=
+CODEUP_HEAD=
+codeup_require_accepted_task() {
+  local project receipt marker
+  # shellcheck source=bin/fm-dod-lib.sh
+  . "$SCRIPT_DIR/fm-dod-lib.sh"
+  [ "$(fm_dod_meta_value "$META" kind)" = ship ] \
+    && [ "$(fm_dod_meta_value "$META" mode)" = direct-PR ] \
+    && [ "$(fm_dod_meta_value "$META" forge)" = push-only ] \
+    && [ "$(fm_dod_meta_value "$META" yolo)" = on ] || {
+      echo 'error: Codeup machine merge requires a direct-PR push-only ship with yolo=on' >&2
+      return 1
+    }
+  CODEUP_WT=$(fm_dod_meta_value "$META" worktree)
+  CODEUP_BRANCH=$(fm_dod_meta_value "$META" branch)
+  CODEUP_BASE=$(fm_dod_meta_value "$META" base_branch)
+  project=$(fm_dod_meta_value "$META" project)
+  [ -n "$CODEUP_BASE" ] || CODEUP_BASE=$("$SCRIPT_DIR/fm-project-mode.sh" --base-branch "$(basename "$project")") || return 1
+  [ -n "$CODEUP_BRANCH" ] && [ -n "$CODEUP_BASE" ] || return 1
+  [ -z "$CODEUP_EXPECT_WT" ] || [ "$(cd "$CODEUP_EXPECT_WT" && pwd -P)" = "$(cd "$CODEUP_WT" && pwd -P)" ] || return 1
+  [ -z "$CODEUP_EXPECT_BRANCH" ] || [ "$CODEUP_EXPECT_BRANCH" = "$CODEUP_BRANCH" ] || return 1
+  [ -z "$CODEUP_EXPECT_BASE" ] || [ "$CODEUP_EXPECT_BASE" = "$CODEUP_BASE" ] || return 1
+  [ -z "$CODEUP_EXPECT_ID" ] || [ "$CODEUP_EXPECT_ID" = "$PR_NUMBER" ] || return 1
+  CODEUP_HEAD=$(git -C "$CODEUP_WT" rev-parse --verify HEAD) || return 1
+  [ "$(git -C "$CODEUP_WT" rev-parse --verify "refs/heads/$CODEUP_BRANCH")" = "$CODEUP_HEAD" ] || return 1
+  receipt=$(printf '%s\t%s\t%s\t%s\t%s' "$CODEUP_HEAD" "$CODEUP_BRANCH" "$CODEUP_BASE" "$PR_NUMBER" "$URL")
+  marker="$STATE/$ID.codeup-accepted"
+  [ -f "$marker" ] && [ ! -L "$marker" ] && [ "$(cat "$marker")" = "$receipt" ] || {
+    echo 'error: Codeup acceptance receipt does not bind this task, URL, branches, and local HEAD' >&2
+    return 1
+  }
+}
+
 record_pr_metadata() {
+  if [ "$PROVIDER" = codeup ]; then
+    codeup_require_accepted_task
+    return $?
+  fi
   if ! FM_PR_CHECK_MERGE=1 "$SCRIPT_DIR/fm-pr-check.sh" "$ID" "$URL"; then
     return 1
   fi
@@ -1596,9 +1662,9 @@ forgejo_confirm_merged() {
   [ "$merged" = true ]
 }
 
-# Record before either forge call. This arms the merge poll without claiming a
-# landed outcome, so even a provider read failure after a real merge cannot
-# leave teardown without the PR identity it needs to verify the result.
+# PR-based forges record before the forge call, arming their poll without a
+# landed claim. Codeup instead validates its existing acceptance receipt here;
+# that receipt remains teardown's identity if a read fails after a real merge.
 away_status=0
 require_current_away_authority || away_status=$?
 [ "$away_status" -eq 0 ] || exit "$away_status"
@@ -1611,6 +1677,23 @@ require_released_captain_hold || exit 1
 # stale-owner recovery can release the record for archive or replacement and
 # the orphaned forge child can still merge on the lapsed away authority.
 case "$PROVIDER" in
+  codeup)
+    hold_away_record_for_merge || exit 1
+    away_status=0
+    require_current_away_authority || away_status=$?
+    [ "$away_status" -eq 0 ] || exit "$away_status"
+    # Re-read task yolo and the receipt immediately before the synchronous call.
+    codeup_require_accepted_task || exit 1
+    # shellcheck source=bin/fm-codeup-change-request.sh
+    . "$SCRIPT_DIR/fm-codeup-change-request.sh"
+    fm_codeup_change_request merge "$CODEUP_WT" "$CODEUP_BRANCH" "$CODEUP_BASE" \
+      "$PR_NUMBER" "$URL" "$CODEUP_HEAD" || exit 1
+    # No asynchronous acceptance or poll: the function proved MERGED before
+    # returning, and the common outcome publisher below records that fact.
+    fm_afk_contract_lock_release || true
+    fm_lock_release "$MERGE_CONTROL_LOCK" || true
+    MERGE_CONTROL_LOCK=
+    ;;
   github)
     merge_output=
     merge_args=()

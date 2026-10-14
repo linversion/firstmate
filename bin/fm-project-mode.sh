@@ -65,7 +65,7 @@
 #   gh-axi (bin/fm-dod-lib.sh owns what each changes for a worker in each
 #   publishing mode; docs/forgejo-tea-integration.md holds the tea evidence).
 #   `push-only` publishes one Codeup merge request against a registered base
-#   with direct-PR; review and landing remain human actions.
+#   with direct-PR; +yolo enables receipt-bound machine landing.
 #   The binding is EXPLICIT because a provider family must never be guessed;
 #   bin/fm-forge-detect.sh proposes gerrit from a protocol fact at project-add
 #   intake, forgejo has no such fact and is proposed from the captain's own
@@ -76,8 +76,6 @@
 #   advances it with content the server has never seen
 #   (docs/gerrit-forge-integration.md section 3).
 #
-# A registered `forge=push-only` project reports yolo=off with a stderr refusal
-# when +yolo is registered, because remote landing remains a human action.
 # A registered `forge=gerrit` project reports yolo=off with an explicit stderr
 # refusal, on the captain's decision of 2026-09-15: a Gerrit Code-Review+2 is a
 # positive attributed claim that a named human approved, read by colleagues and
@@ -282,10 +280,6 @@ if [ "$WANT_FORGE" -eq 1 ]; then
 fi
 if [ "$forge" = gerrit ] && [ "$yolo" = on ]; then
   echo "refused: +yolo is registered for $NAME but yolo is inactive for forge=gerrit, so this reports yolo=off: a Gerrit Code-Review+2 is a positive attributed claim that a named human approved, and firstmate must not manufacture one (captain's decision 2026-09-15)" >&2
-  yolo=off
-fi
-if [ "$forge" = push-only ] && [ "$yolo" = on ]; then
-  echo "refused: +yolo is registered for $NAME but forge=push-only leaves remote landing to a human, so this reports yolo=off" >&2
   yolo=off
 fi
 # A conditional policy is not a task mode. Mechanical callers get its most

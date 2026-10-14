@@ -61,7 +61,8 @@ The captain's confirmation is what binds the forge, and the registry token is th
 Never register the binding from detection alone, and never re-derive it later from the clone.
 `bin/fm-forge-detect.sh` never proposes `forge=forgejo`, so for a remote that may be Forgejo or Gitea ask the captain and register `forge=forgejo` only on that confirmation.
 A Gerrit-hosted project kept local registers `local-only` with no forge token.
-`yolo` is inactive on `forge=gerrit` and `forge=push-only`, so never propose `+yolo` alongside either.
+`yolo` is inactive on `forge=gerrit`, so never propose `+yolo` alongside it.
+For `forge=push-only`, Codeup machine landing follows the merge gate in `bin/fm-pr-merge.sh`.
 
 Propose the origin's advertised default branch alongside the source, name, and posture; if the captain has named another integration branch, propose that branch after verifying it exists on origin.
 Confirm the exact base branch with the captain before registration rather than inferring it from the remote or a branch name.
