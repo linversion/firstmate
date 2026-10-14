@@ -473,7 +473,7 @@ Read both from your own environment; if either is missing, stop and report its n
 Run \`$codeup_script_q publish . $branch_q $base_q\` from your worktree. It finds the repository ID from origin with \`aliyun devops codeup-get-repository\`, checks open requests with \`aliyun devops codeup-list-change-requests\`, creates one with \`aliyun devops codeup-create-change-request\` only if needed, and reads it back with \`aliyun devops codeup-get-change-request\`.
 If publication is interrupted, rerun the same command; an already open request for this source and target is reported instead of creating another.
 It prints \`MR <number> <web URL>\`. Append \`done [at=<epoch>]: Codeup MR <number> <web URL>\` to the status file using those exact returned values and stop.
-A human reviews and merges the request in Codeup. Never run \`codeup-merge-change-request\`, \`codeup-review-change-request\`, or \`codeup-close-change-request\`.
+A human reviews and merges the request in Codeup when yolo is off; firstmate handles yolo landing through its merge gate. Never run \`codeup-merge-change-request\`, \`codeup-review-change-request\`, or \`codeup-close-change-request\`.
 The completion check reads the request on the live repository and confirms its source and target branches. It cannot confirm the request's head commit or CI result because the available API needs a patch-set business ID for CI.
 Do NOT run /no-mistakes.
 EOF

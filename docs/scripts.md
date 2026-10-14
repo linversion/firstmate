@@ -74,7 +74,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `backends/cmux.sh`       | Experimental cmux session-provider adapter                                           |
 | `fm-config-push.sh`      | Push declared inherited local material to live local or remote secondmates and send the placement-specific config reread when changed |
 | `fm-project-mode.sh`     | Resolve a project's registered delivery posture, forge binding, base branch, or ship-branch prefix from `data/projects.md` for fleet sync, home seeding, and the forge agreement a ship spawn or scout promotion applies |
-| `fm-codeup-change-request.sh` | Publish one Codeup merge request idempotently or verify its repository, branches, URL, and state |
+| `fm-codeup-change-request.sh` | Publish or verify a Codeup MR, or route receipt-bound yolo landing through the standard merge gate |
 | `fm-project-base-lib.sh` | Resolve a registered project base against origin, preserving legacy default selection when unregistered |
 | `fm-forge-detect.sh`     | Propose a clone's forge binding from its origin remote for project-add intake, never recording it |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local base branch after approval            |

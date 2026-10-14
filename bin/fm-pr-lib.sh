@@ -237,6 +237,18 @@ fm_pr_url_parse() {
     FM_PR_NUMBER=${BASH_REMATCH[3]}
     return 0
   fi
+  pattern='^https://codeup\.aliyun\.com/([A-Za-z0-9._/-]+)/change/([1-9][0-9]*)$'
+  if [[ "$raw" =~ $pattern ]]; then
+    path=${BASH_REMATCH[1]}
+    fm_pr_gitlab_path_valid "$path" || return 1
+    [[ "$path" == */* ]] || return 1
+    FM_PR_PROVIDER=codeup
+    FM_PR_URL=$raw
+    FM_PR_HOST=codeup.aliyun.com
+    FM_PR_PATH=$path
+    FM_PR_NUMBER=${BASH_REMATCH[2]}
+    return 0
+  fi
   # The path class contains "/" and "-", so this match is greedy to the last
   # "/-/merge_requests/". Any earlier separator therefore lands inside the
   # captured path, where the reserved "-" segment is refused.
