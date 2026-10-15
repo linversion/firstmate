@@ -34,7 +34,7 @@
 #   - <name> [direct-PR forge=external] - <desc> (added <date>)      -> direct-PR off, --forge external
 #   - <name> [<mode> base=<branch>] - <desc> (added <date>)         -> <mode> off, --base-branch <branch>
 #   <name> may contain spaces; it ends at the literal " [" or " - " that follows it.
-#   Bracket tokens are order-independent: +yolo, branch=<prefix>, base=<branch>, and forge=<value>
+#   Bracket tokens are order-independent: +yolo, branch=<prefix>, base=<branch>, and forge=<value>, and codeup-ci=<required|none>
 #   are recognized by their own shape wherever they appear, and whichever token is
 #   left over is the mode. <prefix> must not contain a space; an empty override
 #   ("branch=") resolves to "" for a bare "<task-id>" ship branch instead of the
@@ -116,7 +116,10 @@
 # forge-agreement check) still refuses. --base-branch refuses an empty or invalid
 # branch value, and otherwise prints the confirmed override without a Git probe.
 # All query forms refuse a missing or invalid base for forge=push-only.
-# Usage: fm-project-mode.sh [--raw|--branch-prefix|--base-branch|--forge] <project-name>
+# codeup-ci=none explicitly permits an empty Codeup checklist; absent or
+# codeup-ci=required requires green CI. --codeup-ci queries this policy.
+# The exception is valid only for direct-PR forge=push-only projects.
+# Usage: fm-project-mode.sh [--raw|--branch-prefix|--base-branch|--forge|--codeup-ci] <project-name>
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -128,17 +131,21 @@ RAW=0
 BRANCH_PREFIX_QUERY=0
 WANT_FORGE=0
 BASE_QUERY=0
+CODEUP_CI_QUERY=0
 case "${1:-}" in
+  --codeup-ci) CODEUP_CI_QUERY=1; shift ;;
   --raw) RAW=1; shift ;;
   --branch-prefix) BRANCH_PREFIX_QUERY=1; shift ;;
   --forge) WANT_FORGE=1; shift ;;
   --base-branch) BASE_QUERY=1; shift ;;
 esac
-NAME=${1:?usage: fm-project-mode.sh [--raw|--branch-prefix|--base-branch|--forge] <project-name>}
+NAME=${1:?usage: fm-project-mode.sh [--raw|--branch-prefix|--base-branch|--forge|--codeup-ci] <project-name>}
 
 if [ ! -f "$REG" ]; then
   echo "warn: no registry at $REG; defaulting $NAME to no-mistakes off" >&2
-  if [ "$BASE_QUERY" -eq 1 ]; then
+  if [ "$CODEUP_CI_QUERY" -eq 1 ]; then
+    echo required
+  elif [ "$BASE_QUERY" -eq 1 ]; then
     echo
   elif [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
     echo "fm/"
@@ -176,7 +183,7 @@ parsed=$(awk -v n="$NAME" '
     if (substr($0, 1, plen) != prefix) next
     after = substr($0, plen + 1);
     if (after != "" && substr(after, 1, 2) != " [" && substr(after, 1, 3) != " - ") next
-    mode="no-mistakes"; yolo="off"; branch="fm/"; forge="none"; base="none";
+    mode="no-mistakes"; yolo="off"; branch="fm/"; forge="none"; base="none"; ci="codeup-ci=required";
     if (substr(after, 1, 2) == " [") {
       s="";
       nk = split(after, rest, " ");
@@ -192,6 +199,7 @@ parsed=$(awk -v n="$NAME" '
         if (a[j]=="+yolo") { yolo="on"; continue }
         if (a[j] ~ /^branch=/) { branch = substr(a[j], 8); continue }
         if (a[j] ~ /^base=/) { base = a[j]; continue }
+        if (a[j] ~ /^codeup-ci=/) { ci = a[j]; continue }
         if (a[j] ~ /^forge=/) { forge = a[j]; continue }
         if (a[j] ~ /^[^=]+=/) {
           key = substr(a[j], 1, index(a[j], "=") - 1);
@@ -205,13 +213,15 @@ parsed=$(awk -v n="$NAME" '
     }
     # branch is printed LAST: an empty branch= override must survive as an
     # empty final field, which only holds when nothing follows it.
-    print "posture", mode, yolo, forge, base, branch; exit
+    print "posture", mode, yolo, forge, base, ci, branch; exit
   }
 ' "$REG")
 
 if [ -z "$parsed" ]; then
   echo "warn: project \"$NAME\" not in registry; defaulting to no-mistakes off" >&2
-  if [ "$BASE_QUERY" -eq 1 ]; then
+  if [ "$CODEUP_CI_QUERY" -eq 1 ]; then
+    echo required
+  elif [ "$BASE_QUERY" -eq 1 ]; then
     echo
   elif [ "$BRANCH_PREFIX_QUERY" -eq 1 ]; then
     echo "fm/"
@@ -228,8 +238,8 @@ while IFS=' ' read -r kind rest; do
 done <<EOF
 $parsed
 EOF
-while IFS=' ' read -r m y f base_token b; do
-  mode=$m; yolo=$y; rest_forge=$f; branch=$b; base=$base_token
+while IFS=' ' read -r m y f base_token ci_token b; do
+  mode=$m; yolo=$y; rest_forge=$f; branch=$b; base=$base_token; codeup_ci=${ci_token#codeup-ci=}
 done <<EOF
 $posture
 EOF
@@ -249,6 +259,19 @@ if [ "$forge" = forge=push-only ]; then
     echo "refused: invalid base branch '$push_base' registered for forge=push-only project $NAME in $REG" >&2
     exit 3
   fi
+fi
+case "$codeup_ci" in
+  required) ;;
+  none)
+    if [ "$forge" != forge=push-only ] || [ "$mode" != direct-PR ]; then
+      echo "refused: codeup-ci=none requires direct-PR forge=push-only for $NAME" >&2
+      exit 3
+    fi ;;
+  *) echo "refused: invalid codeup-ci=$codeup_ci for $NAME; expected required or none" >&2; exit 3 ;;
+esac
+if [ "$CODEUP_CI_QUERY" -eq 1 ]; then
+  echo "$codeup_ci"
+  exit 0
 fi
 if [ "$BASE_QUERY" -eq 1 ]; then
   case "$base" in

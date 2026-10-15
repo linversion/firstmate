@@ -5,7 +5,8 @@
 #        fm-codeup-change-request.sh verify-merged <worktree> <ship-branch> <base-branch> <local-id> <web-url>
 #        fm-codeup-change-request.sh merge <worktree> <ship-branch> <base-branch> <local-id> <web-url> <task-id>
 # Merge routes through fm-pr-merge.sh; only that gate calls the sourced function
-# with a receipt-bound head instead of a task ID. Sourcing has no side effects.
+# with a receipt-bound head and registered project path instead of a task ID.
+# Sourcing has no side effects.
 # The CLI commands and response fields follow the central-edition aliyun devops
 # codeup-get-repository, codeup-list-change-requests, codeup-create-change-request,
 # and codeup-get-change-request contracts. A retry lists open requests before
@@ -15,7 +16,9 @@
 # allRequirementsPass=true, NO_CONFLICT, and the latest CI checklist to be PASS.
 # Codeup has no expected-head merge parameter: the last branch read narrows but
 # cannot close a concurrent-push race. Only a readback of MERGED proves landing.
-# Merge uses no-fast-forward and preserves the source branch.
+# Merge uses no-fast-forward and deletes the source branch by default.
+# Explicit registry codeup-ci=none permits commitStatuses: [] read from the
+# current acceptance-head patchSetBizId; nonempty lists still require green CI.
 # Output is MR <local-id> <URL>, using detailUrl when present and webUrl otherwise.
 fm_codeup_change_request() (
 set -euo pipefail
@@ -25,7 +28,7 @@ mode=${1:-}
 wt=${2:-}
 branch=${3:-}
 base=${4:-}
-case "$mode" in publish) [ "$#" -eq 4 ] || die 'usage: publish <worktree> <ship-branch> <base-branch>' ;; merge) [ "$#" -eq 7 ] || die 'usage: merge <worktree> <ship-branch> <base-branch> <local-id> <web-url> <head>' ;; verify|verify-merged) [ "$#" -eq 6 ] || die 'usage: verify <worktree> <ship-branch> <base-branch> <local-id> <web-url>' ;; *) die 'usage: publish|verify|verify-merged|merge <worktree> <ship-branch> <base-branch> [<local-id> <web-url>]' ;; esac
+case "$mode" in publish) [ "$#" -eq 4 ] || die 'usage: publish <worktree> <ship-branch> <base-branch>' ;; merge) [ "$#" -eq 8 ] || die 'usage: merge <worktree> <ship-branch> <base-branch> <local-id> <web-url> <head> <project>' ;; verify|verify-merged) [ "$#" -eq 6 ] || die 'usage: verify <worktree> <ship-branch> <base-branch> <local-id> <web-url>' ;; *) die 'usage: publish|verify|verify-merged|merge <worktree> <ship-branch> <base-branch> [<local-id> <web-url>]' ;; esac
 if [ ! -d "$wt" ] || ! git -C "$wt" rev-parse --git-dir >/dev/null 2>&1; then
   die "not a git worktree: $wt"
 fi
@@ -102,9 +105,13 @@ if [ "$mode" = verify ] || [ "$mode" = verify-merged ] || [ "$mode" = merge ]; t
       || die 'Codeup merge requires passed requirements and no conflicts'
     checks=$(codeup codeup-list-change-request-ci-check-list --repository-id "$repo_id" --local-id "$5" --patch-set-biz-id "$patch") \
       || die 'Codeup CI checklist cannot be read'
-    printf '%s' "$checks" | jq -e --arg head "$head" '
-      type == "object" and .latest == true and .status == "PASS"
-      and ((.commitStatuses // []) | all(.[]; .sha == $head and .state == "success"))' >/dev/null \
+    ci_policy=$("$script_dir/fm-project-mode.sh" --codeup-ci "$(basename "$8")") \
+      || die 'Codeup project CI policy cannot be read'
+    printf '%s' "$checks" | jq -e --arg policy "$ci_policy" --arg head "$head" '
+      type == "object" and (
+        ($policy == "none" and .commitStatuses == [])
+        or (.latest == true and .status == "PASS"
+          and ((.commitStatuses // []) | all(.[]; .sha == $head and .state == "success"))))' >/dev/null \
       || die 'Codeup latest head CI checks are not green'
     # GetBranch has .name and .commit.id; encode slashes in contrib/foo.
     branch_name=$(jq -nr --arg branch "$branch" '$branch | @uri')
@@ -114,7 +121,7 @@ if [ "$mode" = verify ] || [ "$mode" = verify-merged ] || [ "$mode" = merge ]; t
       || die 'Codeup source branch does not hold the acceptance head'
     [ "$(git -C "$wt" rev-parse HEAD)" = "$head" ] || die 'local HEAD changed since acceptance'
     merge_output=$(codeup codeup-merge-change-request --repository-id "$repo_id" --local-id "$5" \
-      --merge-type no-fast-forward --remove-source-branch false 2>&1) || true
+      --merge-type no-fast-forward --remove-source-branch true 2>&1) || true
     # Do not trust even a zero CLI exit: a definite unmerged read refuses.
     if ! (read_request "$5" "$6" '["MERGED"]'); then
       [ -z "$merge_output" ] || printf 'error: > %s\n' "$merge_output" >&2

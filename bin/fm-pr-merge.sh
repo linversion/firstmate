@@ -1728,7 +1728,7 @@ case "$PROVIDER" in
     # shellcheck source=bin/fm-codeup-change-request.sh
     . "$SCRIPT_DIR/fm-codeup-change-request.sh"
     fm_codeup_change_request merge "$CODEUP_WT" "$CODEUP_BRANCH" "$CODEUP_BASE" \
-      "$PR_NUMBER" "$URL" "$CODEUP_HEAD" || exit 1
+      "$PR_NUMBER" "$URL" "$CODEUP_HEAD" "$(fm_dod_meta_value "$META" project)" || exit 1
     # No asynchronous acceptance or poll: the function proved MERGED before
     # returning, and the common outcome publisher below records that fact.
     fm_afk_contract_lock_release || true

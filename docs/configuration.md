@@ -1587,6 +1587,7 @@ The files are static, never executed, and local to each home rather than part of
 ### Codeup delivery
 
 Register Codeup projects with `direct-PR`, `forge=push-only`, and their landing branch as `base=<branch>`.
+Projects without configured CI explicitly add `codeup-ci=none`; the registry parser and [`--codeup-ci` query](../bin/fm-project-mode.sh) default to requiring CI.
 Adding `+yolo` grants the same routine merge authority as other supported forges; without it, each MR waits for human approval and can be merged in the Codeup web UI.
 Workers publish for review and stop; machine landing belongs to firstmate's [`fm-pr-merge.sh`](../bin/fm-pr-merge.sh) gate.
 The [`Codeup adapter`](../bin/fm-codeup-change-request.sh) header owns the merge command, receipt and live-check requirements, merge method, confirmed-state rule, and the concurrent-push limitation of Codeup's API.
