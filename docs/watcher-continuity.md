@@ -52,7 +52,7 @@ If the lock is missing, stale, or temporarily indeterminate while the asynchrono
 Every attempt rechecks the live generation, lock ownership, and the existing arm single-flight guard.
 A foreign live lock ends that wait without arming; shutdown cancels the wait and stale callbacks cannot act on a replacement generation.
 An expired wait leaves manual repair available through the [Pi supervision protocol](supervision-protocols/pi.md).
-A positive `FM_WATCH_EXTENSION_LOG_KEEP_LINES` enables bounded startup ownership, activation, arm-launch and skip-reason records in `state/.watch-extension.log`; logging remains disabled by default.
+A positive `FM_WATCH_EXTENSION_LOG_KEEP_LINES` enables bounded startup ownership, activation, arm-launch, exit/close classification, pipe-drain and delivery duration, and skip-reason records in `state/.watch-extension.log`; logging remains disabled by default.
 The focused regression is `tests/fm-pi-watch-extension.test.sh`, and the real Pi startup guard is `FM_PI_LIVE_E2E=1 FM_PI_LIVE_STARTUP_ONLY=1 bin/fm-test-run.sh tests/fm-pi-primary-live-e2e.test.sh`.
 
 ### Pi session replacement
@@ -430,6 +430,7 @@ A live foreign holder therefore cannot strand a TERM'd watcher in this marker-lo
 It then simulates actionable and empty child closes against the actual Pi and OpenCode close handlers, and:
 
 - Blocks prompt delivery to prove the successor launches first.
+- Holds an accepted Pi branch delivery across two more actionable closes to prove successors continue running and queued wakes are delivered once, in order, without duplicate re-arms.
 - Verifies single-flight behavior.
 - Changes the session lock before close to prove ownership is rechecked.
 - Hangs each successor arm to prove bounded fallback delivery includes the typed restoration failure.
