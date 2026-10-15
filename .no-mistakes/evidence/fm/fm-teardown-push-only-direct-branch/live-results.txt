@@ -1,0 +1,40 @@
+live-push-cleanup.log
+SCENARIO registered branch push permits cleanup without force
+BASELINE same registered push before fix: exit=1
+cleanup exit=0
+Task record removed; returned slot state: A new version of treehouse is available: v3.1.0 → v3.1.3
+SCENARIO identical push without registration refuses cleanup
+cleanup exit=1
+Task record and original HEAD retained.
+SCENARIO registered remote branch lacking HEAD refuses cleanup
+cleanup exit=1
+Task record and original HEAD retained.
+SCENARIO stale tracking ref cannot prove a deleted remote branch landed
+cleanup exit=1
+Task record and original HEAD retained.
+SCENARIO dirty registered-push copy refuses cleanup
+cleanup exit=1
+Task record and original HEAD retained.
+SCENARIO registered branch advanced beyond delivered HEAD still permits cleanup
+cleanup exit=0
+SCENARIO existing default-branch landing permits cleanup without registration
+cleanup exit=0
+All live scenarios completed; disposable lab removed by EXIT trap.
+
+live-registration-guards.log
+SCENARIO no-registration
+exit=1
+No task record published.
+SCENARIO no-base
+exit=1
+No task record published.
+SCENARIO wrong-base
+exit=1
+No task record published.
+
+live-done-proof.log
+SCENARIO supervisor recognizes verified registered push as done
+state: done · source: status-log · branch integration/main pushed to origin
+SCENARIO supervisor rejects a stale done claim after an unpushed commit
+state: blocked · source: status-log · named head 9ecc4bbab8b01bb24bb210d62ceae7c6751aefac is unreachable outside the worker copy
+

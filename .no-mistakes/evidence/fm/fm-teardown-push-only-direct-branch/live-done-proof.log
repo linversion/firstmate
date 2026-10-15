@@ -1,0 +1,9 @@
+warning: You appear to have cloned an empty repository.
+🌳 Setting up worktree...
+🌳 Leased worktree at /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.KWumeP/done-proof/pool/.treehouse/project-091932/1/project. Run 'treehouse return /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.KWumeP/done-proof/pool/.treehouse/project-091932/1/project' to release it.
+
+SCENARIO supervisor recognizes verified registered push as done
+state: done · source: status-log · branch integration/main pushed to origin
+
+SCENARIO supervisor rejects a stale done claim after an unpushed commit
+state: blocked · source: status-log · named head 9ecc4bbab8b01bb24bb210d62ceae7c6751aefac is unreachable outside the worker copy

@@ -1,0 +1,18 @@
+
+SCENARIO no-registration
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-guards.IjXC37/home
+error: forge=push-only direct-PR requires --push-landed-ref <ref>; without the registered direct-push branch this task has no delivery path
+exit=1
+No task record published.
+
+SCENARIO no-base
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-guards.IjXC37/home
+error: fm-spawn.sh --base-branch: forge=push-only direct-PR with a registered push-landed ref requires --base-branch 'integration/main'
+exit=1
+No task record published.
+
+SCENARIO wrong-base
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-guards.IjXC37/home
+error: fm-spawn.sh --base-branch: --base-branch 'integration/main' must match the registered push-landed ref 'release/main' for forge=push-only direct-PR
+exit=1
+No task record published.

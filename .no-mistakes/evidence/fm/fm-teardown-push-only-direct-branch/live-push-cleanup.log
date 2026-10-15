@@ -1,0 +1,174 @@
+warning: You appear to have cloned an empty repository.
+🌳 Setting up worktree...
+🌳 Leased worktree at /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/registered/pool/.treehouse/project-e1937f/1/project. Run 'treehouse return /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/registered/pool/.treehouse/project-e1937f/1/project' to release it.
+
+SCENARIO registered branch push permits cleanup without force
+local HEAD=02fd72da1b57e566b04c0c66c7ca3f9bb5103622; remote registered ref=02fd72da1b57e566b04c0c66c7ca3f9bb5103622	refs/heads/integration/main
+BASELINE same registered push before fix: exit=1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/registered/home
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds 180.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: worktree /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/registered/pool/.treehouse/project-e1937f/1/project has work not on any remote and not landed.
+unpushed commits:
+02fd72d feature
+Push the branch, land its PR, or get the captain's explicit OK to discard, then --force.
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/registered/home
+WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+teardown: reaping leaked worktree process(es) for task-x1: 88030
+A new version of treehouse is available: v3.1.0 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+/Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/registered/project: already current
+teardown task-x1 complete (window fm-lab:fm-task-x1, worktree /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/registered/pool/.treehouse/project-e1937f/1/project)
+Backlog: task-x1 just finished (config/backlog-backend selects manual editing). Update /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/registered/home/data/backlog.md - move task-x1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+cleanup exit=0
+Task record removed; returned slot state: A new version of treehouse is available: v3.1.0 → v3.1.3
+Run "treehouse update" to update
+
+base  main  (repository default)
+1     available    /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/registered/pool/.treehouse/project-e1937f/1/project  (detached)
+warning: You appear to have cloned an empty repository.
+A new version of treehouse is available: v3.1.0 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/unregistered/pool/.treehouse/project-991ee4/1/project. Run 'treehouse return /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/unregistered/pool/.treehouse/project-991ee4/1/project' to release it.
+
+SCENARIO identical push without registration refuses cleanup
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/unregistered/home
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds 180.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: worktree /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/unregistered/pool/.treehouse/project-991ee4/1/project has work not on any remote and not landed.
+unpushed commits:
+e09253d feature
+Push the branch, land its PR, or get the captain's explicit OK to discard, then --force.
+cleanup exit=1
+Task record and original HEAD retained.
+warning: You appear to have cloned an empty repository.
+A new version of treehouse is available: v3.1.0 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/not-contained/pool/.treehouse/project-84473d/1/project. Run 'treehouse return /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/not-contained/pool/.treehouse/project-84473d/1/project' to release it.
+
+SCENARIO registered remote branch lacking HEAD refuses cleanup
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/not-contained/home
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds 180.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: worktree /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/not-contained/pool/.treehouse/project-84473d/1/project has work not on any remote and not landed.
+unpushed commits:
+5e16318 feature
+Push the branch, land its PR, or get the captain's explicit OK to discard, then --force.
+cleanup exit=1
+Task record and original HEAD retained.
+warning: You appear to have cloned an empty repository.
+A new version of treehouse is available: v3.1.0 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/deleted/pool/.treehouse/project-b96125/1/project. Run 'treehouse return /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/deleted/pool/.treehouse/project-b96125/1/project' to release it.
+
+SCENARIO stale tracking ref cannot prove a deleted remote branch landed
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/deleted/home
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds 180.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: worktree /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/deleted/pool/.treehouse/project-b96125/1/project has work not on any remote and not landed.
+unpushed commits:
+63115c8 feature
+Push the branch, land its PR, or get the captain's explicit OK to discard, then --force.
+cleanup exit=1
+Task record and original HEAD retained.
+warning: You appear to have cloned an empty repository.
+A new version of treehouse is available: v3.1.0 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/dirty/pool/.treehouse/project-b38413/1/project. Run 'treehouse return /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/dirty/pool/.treehouse/project-b38413/1/project' to release it.
+
+SCENARIO dirty registered-push copy refuses cleanup
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/dirty/home
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds 180.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REFUSED: worktree /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/dirty/pool/.treehouse/project-b38413/1/project has uncommitted changes.
+uncommitted changes present (includes tracked edits)
+Commit them (or get the captain's explicit OK to discard, then --force).
+cleanup exit=1
+Task record and original HEAD retained.
+warning: You appear to have cloned an empty repository.
+A new version of treehouse is available: v3.1.0 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/advanced/pool/.treehouse/project-e51d12/1/project. Run 'treehouse return /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/advanced/pool/.treehouse/project-e51d12/1/project' to release it.
+
+SCENARIO registered branch advanced beyond delivered HEAD still permits cleanup
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/advanced/home
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds 180.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+teardown: reaping leaked worktree process(es) for task-x1: 5457
+A new version of treehouse is available: v3.1.0 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+/Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/advanced/project: STUCK: on branch integration/main, 0 commits behind origin/main - needs attention
+teardown task-x1 complete (window fm-lab:fm-task-x1, worktree /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/advanced/pool/.treehouse/project-e51d12/1/project)
+Backlog: task-x1 just finished (config/backlog-backend selects manual editing). Update /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/advanced/home/data/backlog.md - move task-x1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+cleanup exit=0
+warning: You appear to have cloned an empty repository.
+A new version of treehouse is available: v3.1.0 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Setting up worktree...
+🌳 Leased worktree at /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/default-branch/pool/.treehouse/project-290c82/1/project. Run 'treehouse return /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/default-branch/pool/.treehouse/project-290c82/1/project' to release it.
+
+SCENARIO existing default-branch landing permits cleanup without registration
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/default-branch/home
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds 180.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+teardown: reaping leaked worktree process(es) for task-x1: 12118
+A new version of treehouse is available: v3.1.0 → v3.1.3
+Run "treehouse update" to update
+
+🌳 Worktree returned to pool.
+/Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/default-branch/project: synced 244c4bd..600a3e8
+teardown task-x1 complete (window fm-lab:fm-task-x1, worktree /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/default-branch/pool/.treehouse/project-290c82/1/project)
+Backlog: task-x1 just finished (config/backlog-backend selects manual editing). Update /Users/stan/.no-mistakes/worktrees/df4749cac11f/01M4ZHEKX4F3553H2JS9NQE9BJ/.live-push.slC9Sm/default-branch/home/data/backlog.md - move task-x1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+cleanup exit=0
+
+All live scenarios completed; disposable lab removed by EXIT trap.

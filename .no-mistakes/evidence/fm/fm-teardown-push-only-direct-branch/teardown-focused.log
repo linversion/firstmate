@@ -1,0 +1,6 @@
+ok - push_landed_ref lands a registered direct push, stays refused unregistered, and refuses a ref lacking HEAD
+ok - worktree whose content already landed in the default branch is torn down (content fallback)
+ok - the content-landed fallback checks a task's recorded base branch, not the default branch
+ok - content fallback refreshes origin default before comparing trees
+ok - dirty worktree is refused even when its committed work has landed (dirty always wins)
+ok - gh lookup error with content not in default refuses (fail-safe)
