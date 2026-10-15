@@ -162,6 +162,7 @@ PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
 # The gate is asked about the ready report this task's worker was told to give;
 # on a Gerrit change both publishing modes report the same published line.
 case "$PROVIDER:$MODE" in
+  codeup:*) DONE_LINE="done: Codeup MR $NUMBER $URL" ;;
   gerrit:*) DONE_LINE="done: PR $URL published for review" ;;
   *:no-mistakes|*:) DONE_LINE="done: PR $URL checks green" ;;
   *) DONE_LINE="done: PR $URL" ;;

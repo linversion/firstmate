@@ -1340,14 +1340,18 @@ fi
 # Secondmates idle on their own watcher (idle pane = healthy), so the busy
 # state is not meaningful for them; read their state from the status log only.
 # Only an exact busy verdict reports working here, and only an exact idle
-# verdict permits the status-log fallback below. Missing, malformed, stale, or
-# unverified semantic state remains unknown.
+# verdict permits the general status-log fallback below. A terminal done
+# declaration still runs its acceptance gate when semantic state is unknown.
 if [ "$KIND" != secondmate ]; then
   BUSY_VERDICT=$(crew_busy_verdict "$BACKEND_TARGET")
   case "${BUSY_VERDICT%% *}" in
     busy) emit working pane "harness busy (${BUSY_VERDICT#* })" ;;
     idle) ;;
-    *) emit unknown pane "harness state unavailable ($BUSY_VERDICT)" ;;
+    *)
+      if [ "$LOG_VERB" = "done" ]; then
+        emit_ship_status_done
+      fi
+      emit unknown pane "harness state unavailable ($BUSY_VERDICT)" ;;
   esac
 fi
 

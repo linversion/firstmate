@@ -2604,7 +2604,7 @@ test_no_run_footer_text_alone_is_not_working() {
   FM_FAKE_AXI_STATUS=""
   FM_FAKE_RUNS_LIST=""
   FM_FAKE_BUSY=1
-  printf 'done: stale completion event\n' > "$d/state/feat-h2.status"
+  printf 'working: stale activity event\n' > "$d/state/feat-h2.status"
   local out; out=$(run_crew_state "$d" feat-h2)
   assert_not_contains "$out" "state: working" "a footer alone must not read working for a converted adapter"
   assert_contains "$out" "state: unknown" "no semantic record -> unknown"
@@ -5895,3 +5895,45 @@ test_unverifiable_run_selection_reports_unknown
 test_legacy_conflicting_run_records_report_unknown
 
 echo "all fm-crew-state tests passed"
+
+# Codex's unverified probe must not prevent terminal acceptance.
+test_unknown_codex_done_runs_acceptance() {
+  reset_fakes
+  FM_FAKE_PR_STATE=OPEN
+  FM_FAKE_PR_MERGED=false
+  local d out
+  d=$(new_case codex-done-unknown)
+  make_repo_on_branch "$d/wt" fm/codex-done
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/codex-done.meta" "window=fm:fm-codex-done" \
+    "worktree=$d/wt" "project=$d/wt" "kind=ship" "mode=direct-PR" "harness=codex"
+  out=$(run_crew_state "$d" codex-done)
+  assert_contains "$out" 'codex-unverified' 'fixture must exercise unknown Codex probe'
+  printf 'done: PR https://github.com/o/r/pull/9\n' > "$d/state/codex-done.status"
+  out=$(run_crew_state "$d" codex-done)
+  assert_contains "$out" 'state: done' 'unknown probe must run terminal acceptance'
+  git -C "$d/wt" commit -q --allow-empty -m unpreserved
+  out=$(run_crew_state "$d" codex-done)
+  assert_contains "$out" 'state: blocked' 'unknown probe must still enforce acceptance'
+  assert_contains "$out" 'unreachable outside the worker copy' 'refusal must come from acceptance gate'
+  # Exercise the real Codeup receipt path with the same unverified probe.
+  git clone -q --bare "$d/wt" "$d/origin.git"
+  git -C "$d/wt" remote add origin git@codeup.aliyun.com:org/project.git
+  git -C "$d/wt" config "url.$d/origin.git.insteadOf" git@codeup.aliyun.com:org/project.git
+  printf 'forge=push-only\nbranch=fm/codex-done\nbase_branch=develop\n' >> "$d/state/codex-done.meta"
+  cat > "$d/fakebin/aliyun" <<'MOCK'
+#!/usr/bin/env bash
+case "$2" in
+  codeup-get-repository) printf '{"id":42,"pathWithNamespace":"org/project"}\n' ;;
+  codeup-get-change-request) printf '{"localId":7,"projectId":42,"sourceProjectId":42,"targetProjectId":42,"sourceBranch":"fm/codex-done","targetBranch":"develop","status":"UNDER_REVIEW","detailUrl":"https://codeup.aliyun.com/org/project/change/7"}\n' ;;
+  *) exit 1 ;;
+esac
+MOCK
+  chmod +x "$d/fakebin/aliyun"
+  printf 'done: Codeup MR 7 https://codeup.aliyun.com/org/project/change/7\n' > "$d/state/codex-done.status"
+  out=$(ALIBABA_CLOUD_YUNXIAO_ORGANIZATION_ID=fixture ALIBABA_CLOUD_YUNXIAO_ACCESS_TOKEN=fixture run_crew_state "$d" codex-done)
+  assert_contains "$out" 'state: done' 'unknown Codex probe must accept a verified Codeup MR'
+  [ -s "$d/state/codex-done.codeup-accepted" ] || fail 'unknown Codex probe skipped writing Codeup receipt'
+  pass 'unknown Codex state accepts preserved done and blocks unpreserved done'
+}
+test_unknown_codex_done_runs_acceptance
