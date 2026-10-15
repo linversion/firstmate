@@ -84,3 +84,28 @@ pass "fm-project-mode: a value outside none|gerrit|forgejo is refused and the re
 pass "fm-project-mode: a missing project or absent registry defaults --forge to none"
 
 echo "# fm-project-mode.test.sh: all assertions passed"
+
+# Codeup CI exceptions are explicit, scoped, and independent of token order.
+cat >> "$DATA/projects.md" <<'EOF'
+- ci-default [direct-PR forge=push-only base=develop] - fixture
+- ci-none [codeup-ci=none direct-PR forge=push-only base=develop +yolo] - fixture
+- ci-empty [direct-PR forge=push-only base=develop codeup-ci=] - fixture
+- ci-bad [direct-PR forge=push-only base=develop codeup-ci=optional] - fixture
+- ci-wrong-forge [direct-PR codeup-ci=none] - fixture
+EOF
+for name in legacy ci-default missing; do
+  out=$(FM_DATA_OVERRIDE="$DATA" "$PROJECT_MODE" --codeup-ci "$name" 2>/dev/null)
+  [ "$out" = required ] || fail "$name did not default to required CI: $out"
+done
+out=$(FM_DATA_OVERRIDE="$DATA" "$PROJECT_MODE" --codeup-ci ci-none)
+[ "$out" = none ] || fail 'explicit Codeup no-CI policy did not resolve'
+[ "$(run_mode ci-none)" = 'direct-PR on' ] || fail 'CI token changed delivery posture'
+for name in ci-bad ci-empty ci-wrong-forge; do
+  for flag in --codeup-ci --forge ''; do
+    # shellcheck disable=SC2086 # Empty flag means default query.
+    if FM_DATA_OVERRIDE="$DATA" "$PROJECT_MODE" $flag "$name" >/dev/null 2>&1; then
+      fail "$name accepted invalid CI policy through $flag"
+    fi
+  done
+done
+pass 'Codeup CI policy defaults required and refuses malformed or misplaced exceptions'

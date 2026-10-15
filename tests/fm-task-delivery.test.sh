@@ -2109,6 +2109,10 @@ case "$1" in
   codeup-list-change-request-patch-sets)
     printf '[{"relatedMergeItemType":"MERGE_SOURCE","versionNo":1,"commitId":"%s","patchSetBizId":"patch-1"}]\n' "${FM_TEST_CODEUP_PATCH_HEAD:-$FM_TEST_CODEUP_HEAD}" ;;
   codeup-list-change-request-ci-check-list)
+    if [ -n "${FM_TEST_CODEUP_CHECKS_JSON:-}" ]; then
+      printf '%s\n' "$FM_TEST_CODEUP_CHECKS_JSON"
+      exit 0
+    fi
     printf '{"latest":%s,"status":"%s","commitStatuses":[{"sha":"%s","state":"success"}]}\n' "${FM_TEST_CODEUP_LATEST:-true}" "${FM_TEST_CODEUP_CI:-PASS}" "$FM_TEST_CODEUP_HEAD" ;;
   codeup-get-branch) printf '{"name":"contrib/task","commit":{"id":"%s"}}\n' "${FM_TEST_CODEUP_BRANCH_HEAD:-$FM_TEST_CODEUP_HEAD}" ;;
   codeup-merge-change-request)
@@ -2119,6 +2123,10 @@ case "$1" in
 esac
 MOCK
   chmod +x "$fakebin/aliyun"
+  # Registration must synthesize the Codeup completion grammar, not GitHub's.
+  out=$("$ROOT/bin/fm-pr-check.sh" task "$url" 2>&1) || fail "Codeup registration failed: $out"
+  [ -s "$home/state/task.codeup-accepted" ] || fail 'registration did not write a Codeup acceptance receipt'
+  rm -f "$home/state/task.pr-poll" "$home/state/task.pr-poll-registration" "$home/state/task.check.sh"
   # Produce the real acceptance receipt through its public done gate.
   out=$(bash -c '. "$1/bin/fm-dod-lib.sh"; fm_dod_accept_ship_done ship direct-PR "$2" "$2" "done: Codeup MR 7 $3" "$FM_HOME/state" task "$4"' _ "$ROOT" "$wt" "$url" "$meta") || fail "Codeup receipt fixture was refused: $out"
   receipt=$(cat "$home/state/task.codeup-accepted")
@@ -2165,6 +2173,29 @@ MOCK
     fi
     unset FM_TEST_CODEUP_PATCH_HEAD FM_TEST_CODEUP_BRANCH_HEAD FM_TEST_CODEUP_REQUIREMENTS FM_TEST_CODEUP_CONFLICT FM_TEST_CODEUP_CI FM_TEST_CODEUP_LATEST FM_TEST_CODEUP_TARGET
   done
+  # The exception only permits an explicit empty array, read for patch-1.
+  for policy in required none; do
+    printf '%s\n' "- project [direct-PR base=develop forge=push-only +yolo codeup-ci=$policy] - fixture" > "$home/data/projects.md"
+    for checks in '{"commitStatuses":[]}' '{"commitStatuses":null}' '{}' '{"commitStatuses":{}}' '{"latest":false,"status":"FAIL","commitStatuses":[{"state":"failed"}]}' invalid; do
+      printf '%s\n' TO_BE_MERGED > "$case_dir/state"
+      : > "$case_dir/calls"
+      if out=$(FM_TEST_CODEUP_CHECKS_JSON="$checks" merge_codeup 2>&1); then
+        [ "$policy:$checks" = 'none:{"commitStatuses":[]}' ] || fail "unsafe CI exception accepted $policy/$checks"
+        assert_grep 'codeup-list-change-request-ci-check-list --repository-id 42 --local-id 7 --patch-set-biz-id patch-1' "$case_dir/calls" 'empty CI was not bound to current patch set'
+      else
+        [ "$policy:$checks" != 'none:{"commitStatuses":[]}' ] || fail "explicit no-CI merge refused: $out"
+        if rg -q '^codeup-merge-change-request ' "$case_dir/calls"; then fail 'invalid CI called merge API'; fi
+      fi
+    done
+  done
+  printf '%s\n' TO_BE_MERGED > "$case_dir/state"
+  : > "$case_dir/calls"
+  if out=$(FM_TEST_CODEUP_PATCH_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa FM_TEST_CODEUP_CHECKS_JSON='{"commitStatuses":[]}' merge_codeup 2>&1); then
+    fail 'empty CI bypassed acceptance patch head binding'
+  fi
+  if rg -q '^codeup-merge-change-request ' "$case_dir/calls"; then fail 'stale empty CI called merge API'; fi
+  printf '%s\n' '- project [direct-PR base=develop forge=push-only +yolo] - fixture' > "$home/data/projects.md"
+  rm -f "$home/state/task.pr-poll-merge-notified"
   for after in TO_BE_MERGED CLOSED; do
     printf '%s\n' TO_BE_MERGED > "$case_dir/state"
     if out=$(FM_TEST_CODEUP_AFTER="$after" merge_codeup 2>&1); then fail "Codeup trusted API exit 0 with state $after"; fi
@@ -2173,7 +2204,7 @@ MOCK
   done
   printf '%s\n' TO_BE_MERGED > "$case_dir/state"
   out=$(FM_TEST_CODEUP_MERGE_RC=1 "$ROOT/bin/fm-pr-merge.sh" task "$url" 2>&1) || fail "MERGED readback was not authoritative after CLI failure: $out"
-  assert_grep 'codeup-merge-change-request --repository-id 42 --local-id 7 --merge-type no-fast-forward --remove-source-branch false' "$case_dir/calls" 'Codeup merge did not use verified identity or preserve source branch'
+  assert_grep 'codeup-merge-change-request --repository-id 42 --local-id 7 --merge-type no-fast-forward --remove-source-branch true' "$case_dir/calls" 'Codeup merge did not use verified identity or delete source branch'
   [ -e "$home/state/task.pr-poll-merge-notified" ] || fail 'confirmed Codeup merge did not record standard outcome'
   [ ! -e "$home/state/task.pr-poll" ] || fail 'Codeup armed unsupported PR monitoring'
   before=$(rg -c '^codeup-merge-change-request ' "$case_dir/calls")
