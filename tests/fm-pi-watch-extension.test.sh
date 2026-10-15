@@ -3200,6 +3200,13 @@ if [ "${1:-}" = --handling-delivered ]; then
   printf 'confirmed generation=%s watcher=%s\n' "$2" "$4" >> "${FM_ARM_LOG:?}"
   exit 0
 fi
+# Model the real --restart contract: retire the retained predecessor only
+# after the replacement arm has been launched, within this fixture home.
+if [ -f "$FM_HOME/arm-pid" ]; then
+  previous=$(cat "$FM_HOME/arm-pid")
+  kill -TERM "$previous" 2>/dev/null || true
+fi
+printf '%s\n' "$$" > "$FM_HOME/arm-pid"
 marker=$(mktemp "${FM_MARKER_ROOT:?}/arm.XXXXXX") || exit 1
 cleanup() { rm -f "$marker"; }
 trap cleanup EXIT
@@ -3313,11 +3320,16 @@ if (previous.prompts.length !== 0) {
   throw new Error(`accepted old-session branch wake reached main: ${previous.prompts.join(" | ")}`);
 }
 await waitFor(() => liveArms().length === 1 && armRows().length >= 2, "old-session successor");
+const closedSuccessor = liveArms()[0];
 writeFileSync(process.env.FM_TRIGGER_FILE, "replacement-successor actionable outcome\n");
-await waitFor(() => liveArms().length === 0, "mid-delivery successor actionable close");
-
+// A held delivery no longer strands the watcher. Wait for its verified
+// replacement, not the old bug where this interval had zero live arms.
+await waitFor(() => !existsSync(closedSuccessor.marker) && liveArms().length === 1 && armRows().length === 3, "mid-delivery continuity successor");
+const retainedSuccessor = liveArms()[0];
 await previous.handlers.get("session_shutdown")?.({ type: "session_shutdown", reason: "new" }, {});
-await waitFor(() => liveArms().length === 0, "retired old-session successor");
+if (!existsSync(retainedSuccessor.marker) || !pidAlive(retainedSuccessor.pid)) {
+  throw new Error("replacement shutdown retired the established successor before activation");
+}
 
 const replacement = makePi(false);
 const replacementMod = await import(`${pathToFileURL(process.env.PLUGIN).href}?replacement=durable-handoff`);
@@ -3328,7 +3340,7 @@ const replacementStart = replacement.handlers.get("session_start")?.({
   previousSessionFile: "/tmp/previous.jsonl",
 }, {});
 await new Promise((resolve) => setTimeout(resolve, 50));
-await waitFor(() => liveArms().length === 1 && armRows().length >= 3, "replacement arm before old delivery settlement");
+await waitFor(() => !existsSync(retainedSuccessor.marker) && liveArms().length === 1 && armRows().length === 4, "replacement arm before old delivery settlement");
 if (replacement.prompts.some((message) => message.includes("signal: replacement-race actionable outcome"))) {
   throw new Error(`replacement raced the accepted old-session delivery: ${replacement.prompts.join(" | ")}`);
 }
@@ -3370,7 +3382,7 @@ process.exit(0);
 EOF
 )
   status=$?
-  expect_code 0 "$status" "Pi session replacement must auto-arm and carry an in-flight actionable close"
+  expect_code 0 "$status" "Pi session replacement must auto-arm and carry an in-flight actionable close: $out"
   [ -z "$out" ] || fail "Pi session-replacement handoff test printed output: $out"
   pass "Pi session replacement auto-arms and carries its in-flight actionable close"
 }
@@ -5310,7 +5322,99 @@ JS
   pass "Pi startup waits safely for owned lock; stale, quit and expired callbacks stay inert"
 }
 
+test_pi_pending_branch_delivery_does_not_stop_continuity() {
+  local repo home out status
+  repo="$TMP_ROOT/pi-held-delivery-root"
+  home="$TMP_ROOT/pi-held-delivery-home"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_pi_watch_extension_fixture "$repo"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" != --handling-delivered ] || exit 0
+printf 'arm=%s\n' "$$" >> "$FM_ARM_LOG"
+count=$(grep -c '^arm=' "$FM_ARM_LOG")
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+trap 'exit 0' TERM INT
+if [ "$count" -le 3 ]; then
+  if [ "$count" -gt 1 ]; then
+    while [ ! -e "$FM_HOME/release-$count" ]; do sleep 0.02; done
+  fi
+  printf 'signal: held-delivery-%s\n' "$count"
+  exit 0
+fi
+while [ ! -e "$FM_HOME/stop" ]; do sleep 0.02; done
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  out=$(PLUGIN="$repo/.pi/extensions/fm-primary-pi-watch.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" FM_ARM_LOG="$home/arms" FM_WATCH_EXTENSION_LOG_KEEP_LINES=100 node --input-type=module 2>&1 <<'EOF'
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const home = process.env.FM_HOME;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const rows = () => existsSync(`${home}/arms`) ? readFileSync(`${home}/arms`, "utf8").trim().split("\n") : [];
+async function until(predicate, label) {
+  for (let i = 0; i < 250; i++) {
+    if (predicate()) return;
+    await sleep(20);
+  }
+  throw new Error(`${label}: ${rows().join(" | ")}`);
+}
+let finish;
+const held = new Promise((resolve) => { finish = resolve; });
+const offers = [];
+let tool;
+const hooks = {};
+const pi = {
+  on(name, callback) { hooks[name] = callback; },
+  registerCommand() {},
+  registerTool(candidate) { if (candidate.name === "fm_watch_arm_pi") tool = candidate; },
+  sendUserMessage: async () => { throw new Error("accepted branch wake reached main"); },
+  events: {
+    on() {},
+    emit(name, offer) {
+      if (name !== "fm-branch-supervision:dispatch") return;
+      offers.push(offer.message);
+      offer.accept(offers.length === 1 ? held : Promise.resolve());
+    },
+  },
+};
+writeFileSync(`${home}/state/.lock`, `${process.pid}\n`);
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default(pi);
+try {
+  await tool.execute("initial", {}, undefined, undefined, {});
+  await until(() => offers.length === 1 && rows().length === 2, "first wake not offered");
+  for (const n of [2, 3]) {
+    writeFileSync(`${home}/release-${n}`, "go\n");
+    await until(() => rows().length === n + 1, "delivery held watcher restoration hostage");
+    if (offers.length !== 1) throw new Error("pending branch delivery was duplicated or reordered");
+  }
+  const live = Number(rows()[3].slice(4));
+  process.kill(live, 0);
+  finish();
+  await until(() => offers.length === 3, "queued wakes not delivered");
+  await sleep(100);
+  if (rows().length !== 4) throw new Error("delivery launched duplicate successors");
+  if (!offers.every((text, i) => text.includes(`held-delivery-${i + 1}`))) throw new Error("wake order changed");
+  const diagnostic = readFileSync(`${home}/state/.watch-extension.log`, "utf8");
+  if (!/exit .*code=0 signal=none delivering=true/.test(diagnostic)) throw new Error("missing exit evidence during delivery");
+  if (!/close .*kind=actionable delivering=true pipeDrainMs=[0-9]+/.test(diagnostic)) throw new Error("missing pipe-drain evidence");
+  if (!/delivery token=.*elapsedMs=[0-9]+/.test(diagnostic)) throw new Error("missing delivery duration");
+} finally {
+  finish();
+  writeFileSync(`${home}/release-2`, "go\n");
+  writeFileSync(`${home}/release-3`, "go\n");
+  writeFileSync(`${home}/stop`, "stop\n");
+  await hooks.session_shutdown?.({ reason: "quit" });
+}
+EOF
+  )
+  status=$?
+  expect_code 0 "$status" "Pi must restore repeated actionable closes while branch delivery is pending: $out"
+  pass "Pi pending branch delivery preserves watcher continuity and ordered exactly-once wakes"
+}
+
 test_pi_startup_waits_for_owned_lock_without_model_turn
+test_pi_pending_branch_delivery_does_not_stop_continuity
 
 test_pi_extension_reports_external_healthy_watcher
 test_pi_tool_returns_agent_tool_result

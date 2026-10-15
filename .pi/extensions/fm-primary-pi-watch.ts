@@ -18,6 +18,9 @@
 // The successor pipeline never waits for the model to read it: a follow-up
 // queued while main is streaming joins the running run without ever raising
 // before_agent_start, so waiting on that event stalls every later close.
+// Accepted branch delivery may remain pending across later actionable closes.
+// Those closes restore continuity independently of the ordered delivery queue;
+// readiness results are reused when that queue resumes.
 // Consumption is tracked only so a replacement can replay a follow-up Pi had
 // not consumed. An idle main consumes at before_agent_start; a streaming main
 // consumes at the user message_start carrying the exact wake text; either
@@ -96,6 +99,11 @@ type UnconsumedWake = {
   pending: PendingActionableClose;
 };
 
+type ContinuityResult = {
+  failure: string;
+  recovery?: { generation: string; watcherPid: string };
+};
+
 type SessionGeneration = {
   id: number;
   stopping: boolean;
@@ -106,6 +114,8 @@ type SessionGeneration = {
   startupTimer: ReturnType<typeof setTimeout> | null;
   retryFailures: number;
   restoring: boolean;
+  delivering: boolean;
+  continuity: Promise<ContinuityResult> | null;
   seq: number;
   pendingActionables: PendingActionableClose[];
   cleanupFailure: string;
@@ -209,6 +219,7 @@ const retiringGenerations = new Set<SessionGeneration>();
 const armRetired = new WeakSet<ChildProcess>();
 const armRecovery = new WeakMap<ChildProcess, { generation: string; watcherPid: string }>();
 const armPendingActionable = new WeakMap<ChildProcess, PendingActionableClose>();
+const actionableRestorations = new WeakMap<PendingActionableClose, { owner: SessionGeneration; result: Promise<ContinuityResult> }>();
 
 function positiveInteger(name: string, fallback: number): number {
   const value = Number(process.env[name]);
@@ -530,6 +541,8 @@ function createGeneration(): SessionGeneration {
     startupTimer: null,
     retryFailures: 0,
     restoring: false,
+    delivering: false,
+    continuity: null,
     seq: 0,
     pendingActionables: [],
     cleanupFailure: "",
@@ -883,14 +896,22 @@ export default function (pi: ExtensionAPI) {
           // A new restoration supersedes whatever became of the previous
           // successor; only a failure during this delivery is retried after it.
           owner.deferredClose = null;
-          const restoration = await restoreAfterActionableClose(owner, pending.predecessorArmPid);
+          const restoration = await restorePendingContinuity(owner, pending);
           if (!generationIsLive(owner)) {
             settleClaim("failed");
             releaseClaim();
             return;
           }
           const message = restoration.failure ? `${pending.message}\n\n${restoration.failure}` : pending.message;
-          const delivered = await deliverActionableWake(owner, message, Boolean(restoration.failure), pending, restoration.recovery);
+          owner.delivering = true;
+          const deliveryStartedAt = Date.now();
+          let delivered: boolean;
+          try {
+            delivered = await deliverActionableWake(owner, message, Boolean(restoration.failure), pending, restoration.recovery);
+          } finally {
+            owner.delivering = false;
+            appendExtensionLog(`delivery token=${pending.token} elapsedMs=${Date.now() - deliveryStartedAt}`);
+          }
           if (!delivered) {
             settleClaim("failed");
             releaseClaim();
@@ -992,10 +1013,26 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
-  async function restoreAfterActionableClose(owner: SessionGeneration, predecessorArmPid: string): Promise<{
-    failure: string;
-    recovery?: { generation: string; watcherPid: string };
-  }> {
+  // Delivery can wait on a branch for minutes. Keep its ordered queue, but
+  // restore an actionable successor independently while that delivery waits.
+  // Cache each result so draining the queue never re-arms a second time or
+  // loses a bounded restoration failure. One in-flight restoration owns all
+  // closes that arrive during its readiness/retry window.
+  function restorePendingContinuity(owner: SessionGeneration, pending: PendingActionableClose): Promise<ContinuityResult> {
+    const existing = actionableRestorations.get(pending);
+    if (existing?.owner === owner) return existing.result;
+    if (!owner.continuity) {
+      const restoration = restoreAfterActionableClose(owner, pending.predecessorArmPid)
+        .finally(() => {
+          if (owner.continuity === restoration) owner.continuity = null;
+        });
+      owner.continuity = restoration;
+    }
+    actionableRestorations.set(pending, { owner, result: owner.continuity });
+    return owner.continuity;
+  }
+
+  async function restoreAfterActionableClose(owner: SessionGeneration, predecessorArmPid: string): Promise<ContinuityResult> {
     let failure = "";
     for (let attempt = 0; attempt <= retryLimit; attempt += 1) {
       if (!generationIsLive(owner)) return { failure: "" };
@@ -1138,6 +1175,11 @@ export default function (pi: ExtensionAPI) {
       stderr += chunk.toString();
       observeEstablishedArm();
     });
+    let exitedAt: number | null = null;
+    armChild.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
+      exitedAt = Date.now();
+      appendExtensionLog(`exit generation=${owner.id} child=${id} pid=${armChild.pid ?? "none"} code=${code ?? "none"} signal=${signal ?? "none"} delivering=${owner.delivering}`);
+    });
     armChild.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
       if (settled) return;
       settled = true;
@@ -1145,12 +1187,18 @@ export default function (pi: ExtensionAPI) {
       settleReadiness(false);
       releaseChild();
       const classification = classifyClose(stdout, stderr, code, signal);
+      appendExtensionLog(`close generation=${owner.id} child=${id} pid=${armChild.pid ?? "none"} code=${code ?? "none"} signal=${signal ?? "none"} kind=${classification.kind} delivering=${owner.delivering} pipeDrainMs=${exitedAt === null ? "unknown" : Date.now() - exitedAt}`);
       const predecessor = String(armChild.pid ?? "");
       if (classification.kind === "actionable") {
         const pending = armPendingActionable.get(armChild) ?? createPendingActionable(classification.message, predecessor);
         enqueuePendingActionable(owner, pending);
         if (!generationIsLive(owner)) return;
         owner.retryFailures = 0;
+        if (owner.delivering) {
+          void restorePendingContinuity(owner, pending).catch((error) => {
+            surfaceFailure(owner, `watcher: FAILED - Pi extension could not restore during pending delivery\n${String(error)}`);
+          });
+        }
         void processPendingActionables(owner);
         return;
       }
