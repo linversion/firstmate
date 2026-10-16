@@ -1,0 +1,34 @@
+base / default: malformed JSON: Expecting ',' delimiter: line 1 column 57 (char 56)
+output: {"state":"success","total_count":1,"statuses":["context":"ci-1"]}
+{"state":""status":"success"","total_count":,"statuses":[]}
+
+base / failure: malformed JSON: Expecting ',' delimiter: line 1 column 57 (char 56)
+output: {"state":"failure","total_count":1,"statuses":["context":"ci-1"]}
+{"state":""status":"failure"","total_count":,"statuses":[]}
+
+base / multiple: malformed JSON: Expecting ',' delimiter: line 1 column 57 (char 56)
+output: {"state":"success","total_count":3,"statuses":["context":"ci-1","context":"ci-2","context":"ci-3"]}
+{"state":""status":"success","status":"success","status":"success"","total_count":,"statuses":[]}
+
+base / empty: valid JSON; exact state, count and contexts verified
+output: {"state":"","total_count":0,"statuses":[]}
+
+base / escaped: malformed JSON: Expecting ',' delimiter: line 1 column 18 (char 17)
+output: {"state":"quote" slash\ newline
+end","total_count":1,"statuses":["context":"ci-1"]}
+{"state":"","total_count":,"statuses":[]}
+
+target / default: valid JSON; exact state, count and contexts verified
+output: {"state":"success","total_count":1,"statuses":[{"context":"ci-1","status":"success"}]}
+
+target / failure: valid JSON; exact state, count and contexts verified
+output: {"state":"failure","total_count":1,"statuses":[{"context":"ci-1","status":"failure"}]}
+
+target / multiple: valid JSON; exact state, count and contexts verified
+output: {"state":"success","total_count":3,"statuses":[{"context":"ci-1","status":"success"},{"context":"ci-2","status":"success"},{"context":"ci-3","status":"success"}]}
+
+target / empty: valid JSON; exact state, count and contexts verified
+output: {"state":"","total_count":0,"statuses":[]}
+
+target / escaped: valid JSON; exact state, count and contexts verified
+output: {"state":"quote\" slash\\ newline\nend","total_count":1,"statuses":[{"context":"ci-1","status":"quote\" slash\\ newline\nend"}]}
