@@ -17,8 +17,9 @@
 # Codeup has no expected-head merge parameter: the last branch read narrows but
 # cannot close a concurrent-push race. Only a readback of MERGED proves landing.
 # Merge uses no-fast-forward and deletes the source branch by default.
-# Explicit registry codeup-ci=none permits commitStatuses: [] read from the
-# current acceptance-head patchSetBizId; nonempty lists still require green CI.
+# Explicit registry codeup-ci=none permits an empty commitStatuses or
+# commit_statuses array read from the current acceptance-head patchSetBizId.
+# A null or missing list still refuses, and nonempty lists still require green CI.
 # Output is MR <local-id> <URL>, using detailUrl when present and webUrl otherwise.
 fm_codeup_change_request() (
 set -euo pipefail
@@ -109,9 +110,13 @@ if [ "$mode" = verify ] || [ "$mode" = verify-merged ] || [ "$mode" = merge ]; t
       || die 'Codeup project CI policy cannot be read'
     printf '%s' "$checks" | jq -e --arg policy "$ci_policy" --arg head "$head" '
       type == "object" and (
-        ($policy == "none" and .commitStatuses == [])
+        ($policy == "none" and (
+          if has("commitStatuses") then .commitStatuses == []
+          else .commit_statuses == [] end))
         or (.latest == true and .status == "PASS"
-          and ((.commitStatuses // []) | all(.[]; .sha == $head and .state == "success"))))' >/dev/null \
+          and ((
+            if has("commitStatuses") then .commitStatuses
+            else .commit_statuses end // []) | all(.[]; .sha == $head and .state == "success"))))' >/dev/null \
       || die 'Codeup latest head CI checks are not green'
     # GetBranch has .name and .commit.id; encode slashes in contrib/foo.
     branch_name=$(jq -nr --arg branch "$branch" '$branch | @uri')

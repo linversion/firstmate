@@ -2215,6 +2215,28 @@ MOCK
     fail 'empty CI bypassed acceptance patch head binding'
   fi
   if rg -q '^codeup-merge-change-request ' "$case_dir/calls"; then fail 'stale empty CI called merge API'; fi
+  # aliyun CLI 3.5.1 returns commit_statuses (snake_case), not commitStatuses.
+  # policy=none must accept that empty list the same way as the camelCase fixture.
+  # The required path's .status == "PASS" and per-check .sha/.state names were not
+  # observed on a live CI response (both local Codeup projects have no CI), so the
+  # snake_case required case only assumes the checklist key name changes and the
+  # already-tested inner fields stay as the camelCase fixture writes them.
+  printf '%s\n' "- project [direct-PR base=develop forge=push-only +yolo codeup-ci=none] - fixture" > "$home/data/projects.md"
+  printf '%s\n' TO_BE_MERGED > "$case_dir/state"
+  : > "$case_dir/calls"
+  if out=$(FM_TEST_CODEUP_CHECKS_JSON='{"check_list":[],"check_runs":null,"commit_statuses":[],"latest":true}' merge_codeup 2>&1); then
+    assert_grep 'codeup-list-change-request-ci-check-list --repository-id 42 --local-id 7 --patch-set-biz-id patch-1' "$case_dir/calls" 'snake_case empty CI was not bound to current patch set'
+  else
+    fail "explicit no-CI merge refused snake_case commit_statuses: $out"
+  fi
+  printf '%s\n' "- project [direct-PR base=develop forge=push-only +yolo codeup-ci=required] - fixture" > "$home/data/projects.md"
+  printf '%s\n' TO_BE_MERGED > "$case_dir/state"
+  : > "$case_dir/calls"
+  if out=$(FM_TEST_CODEUP_CHECKS_JSON="{\"latest\":true,\"status\":\"PASS\",\"commit_statuses\":[{\"sha\":\"$head\",\"state\":\"success\"}]}" merge_codeup 2>&1); then
+    assert_grep 'codeup-merge-change-request --repository-id 42 --local-id 7 --merge-type no-fast-forward --remove-source-branch true' "$case_dir/calls" 'snake_case green CI did not merge'
+  else
+    fail "required CI refused snake_case commit_statuses: $out"
+  fi
   printf '%s\n' '- project [direct-PR base=develop forge=push-only +yolo] - fixture' > "$home/data/projects.md"
   rm -f "$home/state/task.pr-poll-merge-notified"
   for after in TO_BE_MERGED CLOSED; do
